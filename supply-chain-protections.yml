@@ -1,0 +1,30 @@
+name: Software supply chain protections check
+
+on:
+  workflow_call:
+    inputs:
+      fail-on-warn:
+        type: boolean
+        default: false
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read  # This is required for actions/checkout
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          path: ./target
+
+      - name: Evaluate supply-chain policy
+        uses: $/supply-chain-protections/check
+        with:
+          fail-on-warn: ${{ inputs.fail-on-warn }}
+          path: ./target
