@@ -1,0 +1,21 @@
+name: Repository inventory
+description: Inventories JavaScript projects, workflows, and Dockerfiles for piping into Conftest
+
+inputs:
+  root:
+    description: Repository root
+    required: true
+  output:
+    description: Inventory JSON destination
+    required: true
+  repository:
+    description: owner/repository
+    required: true
+
+outputs:
+  inventory:
+    description: Generated inventory path
+
+runs:
+  using: node24
+  main: ./dist/index.js
