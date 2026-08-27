@@ -1,0 +1,72 @@
+name: Supply-chain policy check
+description: Inventories a repository and evaluates supply-chain policies
+
+inputs:
+  fail-on-warn:
+    description: Fail when policy warnings are produced
+    default: "false"
+  path:
+    description: The path to the target folder that should be scanned
+    default: "."
+
+runs:
+  using: "composite"
+  steps:
+    - name: Generate repository inventory
+      id: inventory
+      uses: $/supply-chain-protections/inventory
+      with:
+        root: ${{ inputs.path != '.' && inputs.path || github.workspace }}
+        repository: ${{ github.repository }}
+        output: ${{ runner.temp }}/supply-chain-inventory.json
+
+    - name: Install Conftest
+      shell: bash
+      env:
+        CONFTEST_VERSION: 0.69.0
+        CONFTEST_SHA256: "96fc2fbf11f0afde51256647127e6f00a64ce839a4d9a0a1aef2426c0e6f4b3f"
+      run: |
+        set -euo pipefail
+
+        archive="$RUNNER_TEMP/conftest.tar.gz"
+        bin_dir="$RUNNER_TEMP/conftest-bin"
+
+        curl --fail --location --silent --show-error \
+          "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz" \
+          --output "$archive"
+
+        if ! printf '%s %s\n' "$CONFTEST_SHA256" "$archive" | sha256sum --check --status -; then
+          echo "::error::Conftest checksum verification failed"
+          exit 1
+        fi
+
+        mkdir -p "$bin_dir"
+        tar -xzf "$archive" -C "$bin_dir" conftest
+        printf '%s\n' "$bin_dir" >> "$GITHUB_PATH"
+
+    - name: Evaluate policy
+      shell: bash
+      env:
+        INVENTORY: ${{ steps.inventory.outputs.inventory }}
+        FAIL_ON_WARN: ${{ inputs.fail-on-warn }}
+      run: |
+        set -euo pipefail
+
+        policy_root="$(cd "$GITHUB_ACTION_PATH/.." && pwd)"
+
+        args=(
+          test "$INVENTORY"
+          --policy "$policy_root/policy"
+          --data "$policy_root/data"
+          --namespace supply_chain
+          --output github
+          --github-hide-passed
+          --show-builtin-errors
+        )
+
+        if [[ "$FAIL_ON_WARN" == "true" ]]; then
+          args+=(--fail-on-warn)
+        fi
+
+        conftest "${args[@]}"
+
