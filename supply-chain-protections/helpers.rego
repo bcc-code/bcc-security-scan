@@ -2,6 +2,12 @@ package supply_chain.policies
 
 import rego.v1
 
+inline_install_with_package_pattern := concat("", [
+    `(?im)(^|[;&|]\s*|\s)(npm|pnpm|yarn|bun|deno)(\.cmd)?`,
+    `\s+(i|install)(\s+--?[a-z0-9-]+(=[^\s]+)?)*`,
+    `\s+(@?[a-z0-9_./])`,
+])
+
 policy_finding(message, file, policy_id) := {
     "msg": message,
     "_loc": {
@@ -74,9 +80,73 @@ github_pin_exception(reference) if {
 }
 
 engine_at_least(constraint, minimum) if {
-    regex.match(`^\s*>=\s*[0-9]+\.[0-9]+\.[0-9]+`, constraint)
-    version := regex.find_n(`[0-9]+\.[0-9]+\.[0-9]+`, constraint, 1)[0]
+    is_string(constraint)
+    clauses := regex.split(`\s*\|\|\s*`, trim_space(constraint))
+    count(clauses) > 0
+    every clause in clauses {
+        range_clause_at_least(clause, minimum)
+    }
+}
+
+range_clause_at_least(clause, minimum) if {
+    regex.match(`\s+-\s+`, clause)
+    version_token := regex.find_n(
+        `[0-9]+(?:\.(?:[0-9]+|[xX*])){0,2}`,
+        clause,
+        1,
+    )[0]
+    version := normalized_semver(version_token)
     semver.compare(version, minimum) >= 0
+}
+
+range_clause_at_least(clause, minimum) if {
+    not regex.match(`\s+-\s+`, clause)
+    without_upper_bounds := regex.replace(
+        clause,
+        `<=?\s*v?[0-9]+(?:\.(?:[0-9]+|[xX*])){0,2}`,
+        "",
+    )
+    some version_token in regex.find_n(
+        `[0-9]+(?:\.(?:[0-9]+|[xX*])){0,2}`,
+        without_upper_bounds,
+        -1,
+    )
+    version := normalized_semver(version_token)
+    semver.compare(version, minimum) >= 0
+}
+
+normalized_semver(version) := version if {
+    regex.match(`^[0-9]+\.[0-9]+\.[0-9]+$`, version)
+}
+
+normalized_semver(version) := sprintf("%s.0", [version]) if {
+    regex.match(`^[0-9]+\.[0-9]+$`, version)
+}
+
+normalized_semver(version) := sprintf("%s.0.0", [major]) if {
+    regex.match(`^[0-9]+\.(?:[xX*])$`, version)
+    major := regex.split(`\.`, version)[0]
+}
+
+normalized_semver(version) := sprintf("%s.0.0", [version]) if {
+    regex.match(`^[0-9]+$`, version)
+}
+
+normalized_semver(version) := normalized if {
+    regex.match(`^[0-9]+\.(?:[0-9]+|[xX*])\.(?:[0-9]+|[xX*])$`, version)
+    normalized := concat(".", [
+        wildcard_to_zero(regex.split(`\.`, version)[0]),
+        wildcard_to_zero(regex.split(`\.`, version)[1]),
+        wildcard_to_zero(regex.split(`\.`, version)[2]),
+    ])
+}
+
+wildcard_to_zero(part) := "0" if {
+    part in {"x", "X", "*"}
+}
+
+wildcard_to_zero(part) := part if {
+    not part in {"x", "X", "*"}
 }
 
 true_value(value) if {
@@ -106,7 +176,46 @@ npm_install(command) if {
 }
 
 uses_npm(command) if {
-    regex.match(`(?im)(^|[;&|]\s*|\s)npm(\.cmd)?\s+`, command)
+    regex.match(`(?im)(^|[;&|]\s*|\s)(npm|npx)(\.cmd)?\s+`, command)
+}
+
+uses_inline_install(command) if {
+    regex.match(
+        `(?im)(^|[;&|]\s*|\s)(npx(\.cmd)?|pnpx(\.cmd)?|bunx)(\s|$)`,
+        command,
+    )
+}
+
+uses_inline_install(command) if {
+    regex.match(
+        `(?im)(^|[;&|]\s*|\s)(bun(\.cmd)?\s+x|npm(\.cmd)?\s+(exec|x))(\s|$)`,
+        command,
+    )
+}
+
+uses_inline_install(command) if {
+    regex.match(
+        `(?im)(^|[;&|]\s*|\s)(pnpm|yarn)(\.cmd)?\s+dlx(\s|$)`,
+        command,
+    )
+}
+
+uses_inline_install(command) if {
+    regex.match(
+        `(?im)(^|[;&|]\s*|\s)(npm|pnpm|yarn|bun|deno)(\.cmd)?\s+add(\s|$)`,
+        command,
+    )
+}
+
+uses_inline_install(command) if {
+    regex.match(inline_install_with_package_pattern, command)
+}
+
+uses_inline_install(command) if {
+    regex.match(
+        `(?im)(^|[;&|]\s*|\s)(npm|pnpm|yarn|bun)(\.cmd)?\s+(global|g)\s+add(\s|$)`,
+        command,
+    )
 }
 
 uses_forbidden_manager(command) if {

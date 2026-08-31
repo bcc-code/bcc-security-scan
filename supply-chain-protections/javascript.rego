@@ -127,7 +127,26 @@ deny contains finding if {
     )
 }
 
-# Prevents npm commands in pnpm-based CI and container build flows.
+# Prevents dynamic package installs and execution in CI and container build flows.
+deny contains finding if {
+    inline_install_remediation :=
+    "Instead of npx, add a package script that references the binary directly, without npx."
+    some command in input.ciCommands
+    uses_inline_install(command.command)
+
+    message := sprintf(
+        "%s installs or executes a package inline.",
+        [command.path],
+    )
+
+    finding := policy_finding(
+        concat(" ", [message, inline_install_remediation]),
+        command.path,
+        "javascript/inline-package-install",
+    )
+}
+
+# Prevents npm and npx commands in pnpm-based CI and container build flows.
 # This is to prevent running npm commands without supply chain safeguards
 deny contains finding if {
     some command in input.ciCommands
@@ -154,7 +173,29 @@ deny contains finding if {
     )
 }
 
-# Prevents package scripts from invoking npm in pnpm projects.
+# Prevents package scripts from installing or executing packages inline.
+deny contains finding if {
+    inline_install_remediation1 :=
+    "If using npx/pnpx or similar, drop using it and call binary directly."
+    inline_install_remediation2 :=
+    "Using npx/pnpx prefix is not required within package scripts."
+    some project in input.projects
+    some _, script in object.get(project.package, "scripts", {})
+    uses_inline_install(script)
+
+    message := sprintf(
+        "%s contains an inline package install or execution.",
+        [project.packagePath],
+    )
+
+    finding := policy_finding(
+        concat(" ", [message, inline_install_remediation1, inline_install_remediation2]),
+        project.packagePath,
+        "javascript/inline-package-install-script",
+    )
+}
+
+# Prevents package scripts from invoking npm or npx in pnpm projects.
 deny contains finding if {
     some project in input.projects
     some _, script in object.get(project.package, "scripts", {})
