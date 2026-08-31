@@ -84,8 +84,6 @@ runs:
           -C "$policy_root" \
           "bcc-security-scan-policy-$POLICY_VERSION/supply-chain-protections"
 
-        sarif="$RUNNER_TEMP/supply-chain-results.sarif"
-
         # --github-hide-passed should be added when conftest 0.70.0 is released or newer
         args=(
           test "$INVENTORY"
@@ -99,15 +97,40 @@ runs:
           args+=(--fail-on-warn)
         fi
 
+        sarif="$RUNNER_TEMP/supply-chain-results.sarif"
+        diagnostics="$RUNNER_TEMP/conftest-diagnostics.log"
+
         set +e
-        conftest "${args[@]}" > "$sarif"
+        conftest "${args[@]}" > "$sarif" 2> "$diagnostics"
         exit_code=$?
         set -e
+
+        cat "$diagnostics" >&2
 
         {
           echo "sarif=$sarif"
           echo "exit_code=$exit_code"
         } >> "$GITHUB_OUTPUT"
+
+        if ! jq -e '.runs | type == "array"' "$sarif" >/dev/null 2>&1; then
+          message="$(cat "$diagnostics")"
+          [[ -n "$message" ]] || message="The policy engine (OPA's Conftest) did not produce valid SARIF."
+
+          escaped="${message//'%'/'%25'}"
+          escaped="${escaped//$'\r'/'%0D'}"
+          escaped="${escaped//$'\n'/'%0A'}"
+          printf '::error title=Invalid supply-chain policy::%s\n' "$escaped"
+
+          {
+            echo "### Invalid supply-chain policy"
+            echo
+            echo '```text'
+            printf '%s\n' "$message"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          exit 0
+        fi
 
         scanned_sha="$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)"
         echo "### Supply-chain policy findings" >> "$GITHUB_STEP_SUMMARY"
