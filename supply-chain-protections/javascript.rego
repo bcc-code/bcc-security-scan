@@ -129,8 +129,10 @@ deny contains finding if {
 
 # Prevents dynamic package installs and execution in CI and container build flows.
 deny contains finding if {
-    inline_install_remediation :=
-    "Instead of npx, add a package script that references the binary directly, without npx."
+    inline_install_remediation1 :=
+    "Instead of npx/pnpx, add a package script that references the binary directly, without npx/pnpx."
+    inline_install_remediation2 :=
+    "Using npx/pnpx prefix is not required within package scripts and adds risks."
     some command in input.ciCommands
     uses_inline_install(command.command)
 
@@ -140,7 +142,7 @@ deny contains finding if {
     )
 
     finding := policy_finding(
-        concat(" ", [message, inline_install_remediation]),
+        concat(" ", [message, inline_install_remediation1, inline_install_remediation2]),
         command.path,
         "javascript/inline-package-install",
     )
@@ -178,7 +180,7 @@ deny contains finding if {
     inline_install_remediation1 :=
     "If using npx/pnpx or similar, drop using it and call binary directly."
     inline_install_remediation2 :=
-    "Using npx/pnpx prefix is not required within package scripts."
+    "Using npx/pnpx prefix is not required within package scripts and adds risks."
     some project in input.projects
     some _, script in object.get(project.package, "scripts", {})
     uses_inline_install(script)
