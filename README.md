@@ -9,8 +9,28 @@ name: Supply-chain security
 
 on:
   pull_request:
+    branches: [main, master]
+    paths: &supply-chain-paths
+      - '.github/workflows/**'
+      - '**/action.yml'
+      - '**/action.yaml'
+      - '**/package.json'
+      - '**/package-lock.json'
+      - '**/pnpm-lock.yaml'
+      - '**/pnpm-workspace.yaml'
+      - '**/.npmrc'
+      - '**/yarn.lock'
+      - '**/bun.lock'
+      - '**/bun.lockb'
+      - '**/deno.lock'
+      - '**/Dockerfile'
+      - '**/Dockerfile.*'
+      - '**/*.Dockerfile'
+      - '**/.dockerignore'
   push:
-    branches: [main]
+    branches: [main, master]
+    paths: *supply-chain-paths
+  workflow_dispatch:
 
 permissions: {}
 
