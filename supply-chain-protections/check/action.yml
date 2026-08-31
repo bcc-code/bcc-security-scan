@@ -100,6 +100,14 @@ runs:
         scanned_sha="$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)"
         echo "### Supply-chain policy findings" >> "$GITHUB_STEP_SUMMARY"
 
+        unpinned_total="$(jq '[
+          .runs[].results[]
+          | select(.level != "none")
+          | select(.message.text | endswith("must use a full 40-character commit SHA"))
+        ] | length' "$sarif")"
+        unpinned_seen=0
+        unpinned_summary=()
+
         while IFS= read -r result; do
           level="$(jq -r '.level // "warning"' <<< "$result")"
           file="$(jq -r \
@@ -117,6 +125,12 @@ runs:
             *) continue ;;
           esac
 
+          is_unpinned=false
+          if [[ "$message" == *"must use a full 40-character commit SHA" ]]; then
+            is_unpinned=true
+            unpinned_seen=$((unpinned_seen + 1))
+          fi
+
           escaped_file="${file//'%'/'%25'}"
           escaped_file="${escaped_file//$'\r'/'%0D'}"
           escaped_file="${escaped_file//$'\n'/'%0A'}"
@@ -127,15 +141,33 @@ runs:
           escaped_message="${escaped_message//$'\r'/'%0D'}"
           escaped_message="${escaped_message//$'\n'/'%0A'}"
 
-          printf '::%s file=%s,line=%s::%s\n' \
-            "$annotation" "$escaped_file" "$line" "$escaped_message"
+          if [[ "$is_unpinned" == "false" || "$unpinned_total" -le 7 || "$unpinned_seen" -le 3 ]]; then
+            printf '::%s file=%s,line=%s::%s\n' \
+              "$annotation" "$escaped_file" "$line" "$escaped_message"
+          fi
 
           encoded_file="$(jq -rn --arg path "$file" \
             '$path | split("/") | map(@uri) | join("/")')"
           url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$scanned_sha/$encoded_file#L$line"
 
-          printf -- '- [%s#L%s](%s): %s\n' \
-            "$file" "$line" "$url" "$message" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$is_unpinned" == "true" ]]; then
+            printf -v summary_line -- '- [%s#L%s](%s): %s' \
+              "$file" "$line" "$url" "$message"
+            unpinned_summary+=("$summary_line")
+          else
+            printf -- '- [%s#L%s](%s): %s\n' \
+              "$file" "$line" "$url" "$message" >> "$GITHUB_STEP_SUMMARY"
+          fi
         done < <(
           jq -c '.runs[].results[] | select(.level != "none")' "$sarif"
         )
+
+        if [[ "$unpinned_total" -gt 0 ]]; then
+          {
+            printf '\n<details>\n'
+            printf '<summary>Unpinned workflow dependencies (%s)</summary>\n\n' \
+              "$unpinned_total"
+            printf '%s\n' "${unpinned_summary[@]}"
+            printf '\n</details>\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
