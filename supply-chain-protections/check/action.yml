@@ -68,16 +68,28 @@ runs:
       env:
         INVENTORY: ${{ steps.inventory.outputs.inventory }}
         FAIL_ON_WARN: ${{ inputs.fail-on-warn }}
+        POLICY_BRANCH: "policy-v1"
       run: |
         set -euo pipefail
 
-        policy_root="$(cd "$GITHUB_ACTION_PATH/.." && pwd)"
+        policy_root="$RUNNER_TEMP/supply-chain-policy"
+
+        curl --fail --location --silent --show-error \
+          "https://github.com/bcc-code/bcc-security-scan/archive/refs/heads/$POLICY_BRANCH.tar.gz" \
+          --output "$RUNNER_TEMP/policy.tar.gz"
+
+        mkdir -p "$policy_root"
+        tar -xzf "$RUNNER_TEMP/policy.tar.gz" \
+          --strip-components=2 \
+          -C "$policy_root" \
+          "bcc-security-scan-$POLICY_BRANCH/supply-chain-protections"
+
         sarif="$RUNNER_TEMP/supply-chain-results.sarif"
 
         # --github-hide-passed should be added when conftest 0.70.0 is released or newer
         args=(
           test "$INVENTORY"
-          --policy "$policy_root/policy"
+          --policy "$policy_root"
           --namespace "supply_chain.*"
           --output sarif
           --show-builtin-errors
