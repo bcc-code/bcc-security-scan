@@ -66,6 +66,13 @@ valid_docker_pin(reference) if {
     )
 }
 
+github_pin_exception(reference) if {
+    reference in {
+        "bcc-code/bcc-platform-deploy/.github/workflows/landing-zone.yml@main",
+        "bcc-code/bcc-platform-deploy/.github/workflows/terraform.yml@main",
+    }
+}
+
 engine_at_least(constraint, minimum) if {
     regex.match(`^\s*>=\s*[0-9]+\.[0-9]+\.[0-9]+`, constraint)
     version := regex.find_n(`[0-9]+\.[0-9]+\.[0-9]+`, constraint, 1)[0]

@@ -58,6 +58,7 @@ deny contains finding if {
     reference != ""
     not is_local_reference(reference)
     not is_docker_reference(reference)
+    not github_pin_exception(reference)
     not valid_github_pin(reference)
 
     finding := {
