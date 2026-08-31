@@ -10,7 +10,7 @@
     "pnpm": ">=11.0.0"
   },
   "scripts": {
-    "build": "ncc build src/index.ts --out dist --minify",
+    "build": "ncc build src/index.ts --out dist",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "test": "node --test test/inventory.test.ts",
     "check": "pnpm run typecheck && pnpm test"
@@ -24,8 +24,8 @@
   },
   "devDependencies": {
     "@types/ini": "^4.1.1",
-    "@types/node": "24.1.0",
+    "@types/node": "25.9.3",
     "@vercel/ncc": "0.45.0",
-    "typescript": "7.0.2"
+    "typescript": "6.0.3"
   }
 }
