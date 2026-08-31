@@ -54,13 +54,13 @@ runs:
 
         policy_root="$(cd "$GITHUB_ACTION_PATH/.." && pwd)"
 
+        # --github-hide-passed should be added when conftest 0.70.0 is released or newer
         args=(
           test "$INVENTORY"
           --policy "$policy_root/policy"
           --data "$policy_root/data"
           --namespace "supply_chain.*"
           --output github
-          --github-hide-passed
           --show-builtin-errors
         )
 
