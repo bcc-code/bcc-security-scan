@@ -87,7 +87,7 @@ number_at_least(value, minimum) if {
 
 number_at_least(value, minimum) if {
     is_string(value)
-    regex.match(`^[0-9]+([.][0-9]+)?$`, value)
+    # regex.match(`^[0-9]+([.][0-9]+)?$`, value)
     to_number(value) >= minimum
 }
 
