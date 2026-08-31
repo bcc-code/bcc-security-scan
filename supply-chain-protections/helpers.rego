@@ -110,7 +110,7 @@ uses_forbidden_manager(command) if {
 }
 
 forbidden_lockfile(path) if {
-    regex.match(`(^|/)yarn\.lock$`, path) or asd
+    regex.match(`(^|/)yarn\.lock$`, path)
 }
 
 forbidden_lockfile(path) if {
