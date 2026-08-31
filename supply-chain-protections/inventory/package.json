@@ -1,0 +1,31 @@
+{
+  "name": "@bcc-code/supply-chain-inventory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.24.0",
+  "engines": {
+    "node": ">=24.15.0",
+    "npm": "disallow",
+    "pnpm": ">=11.0.0"
+  },
+  "scripts": {
+    "build": "ncc build src/index.ts --out dist --minify",
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "test": "node --test test/inventory.test.ts",
+    "check": "pnpm run typecheck && pnpm test"
+  },
+  "dependencies": {
+    "@actions/core": "3.0.1",
+    "@balena/dockerignore": "1.0.2",
+    "dockerfile-ast": "0.7.1",
+    "ini": "7.0.0",
+    "yaml": "2.9.0"
+  },
+  "devDependencies": {
+    "@types/ini": "^4.1.1",
+    "@types/node": "24.1.0",
+    "@vercel/ncc": "0.45.0",
+    "typescript": "7.0.2"
+  }
+}

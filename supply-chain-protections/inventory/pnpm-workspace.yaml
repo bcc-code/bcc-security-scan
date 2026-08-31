@@ -1,0 +1,11 @@
+packages: []
+
+engineStrict: true
+packageManagerStrictVersion: true
+pmOnFail: error
+minimumReleaseAge: 10080 # 7 days in minutes
+minimumReleaseAgeStrict: true
+blockExoticSubdeps: true
+strictDepBuilds: true
+dangerouslyAllowAllBuilds: false
+trustPolicy: no-downgrade
