@@ -16,6 +16,19 @@ pnpm_true_required := {
     "strictDepBuilds",
 }
 
+# Recommends pnpm over npm because pnpm provides stronger supply-chain controls.
+warn contains finding if {
+    some project in input.projects
+    project.manager == "npm"
+
+    finding := policy_finding(
+        sprintf("%s uses npm; pnpm is preferred", [project.root]),
+        project.packagePath,
+        "javascript/prefer-pnpm",
+    )
+}
+
+# Allows only npm and pnpm package managers in JavaScript projects.
 deny contains finding if {
     some project in input.projects
     project.manager != "npm"
@@ -31,17 +44,8 @@ deny contains finding if {
     )
 }
 
-warn contains finding if {
-    some project in input.projects
-    project.manager == "npm"
-
-    finding := policy_finding(
-        sprintf("%s uses npm; pnpm is preferred", [project.root]),
-        project.packagePath,
-        "javascript/prefer-pnpm",
-    )
-}
-
+# Requires every JavaScript project to have an applicable committed lockfile.
+# lockfilePath is computed by the inventory action
 deny contains finding if {
     some project in input.projects
     project.lockfilePath == ""
@@ -53,6 +57,7 @@ deny contains finding if {
     )
 }
 
+# Prevents npm's package-lock.json from being committed in a pnpm project.
 deny contains finding if {
     some project in input.projects
     project.manager == "pnpm"
@@ -60,23 +65,25 @@ deny contains finding if {
     tracked(package_lock)
 
     finding := policy_finding(
-        sprintf("%s must not contain package-lock.json", [project.root]),
+        sprintf("%s must not contain package-lock.json, it is managed using pnpm", [project.root]),
         package_lock,
         "javascript/pnpm-package-lock-forbidden",
     )
 }
 
+# Rejects lockfiles created by unsupported package managers such as Yarn, Bun, and Deno.
 deny contains finding if {
     some path in input.trackedFiles
     forbidden_lockfile(path)
 
     finding := policy_finding(
-        sprintf("Unsupported package-manager lockfile: %s", [path]),
+        sprintf("Unsupported package-manager lockfile: %s. You should not use this package manager.", [path]),
         path,
         "javascript/unsupported-lockfile",
     )
 }
 
+# Requires container builds to copy the project's lockfile for reproducible installs.
 deny contains finding if {
     some build in input.containerBuilds
     project := project_for(build.projectRoot)
@@ -94,6 +101,7 @@ deny contains finding if {
     )
 }
 
+# Requires CI=true for pnpm commands in CI and container build flows.
 deny contains finding if {
     some command in input.ciCommands
     project := project_for(command.projectRoot)
@@ -107,10 +115,9 @@ deny contains finding if {
     )
 }
 
+# Requires npm ci instead of npm install for reproducible CI and container installs.
 deny contains finding if {
     some command in input.ciCommands
-    project := project_for(command.projectRoot)
-    project.manager == "npm"
     npm_install(command.command)
 
     finding := policy_finding(
@@ -120,6 +127,8 @@ deny contains finding if {
     )
 }
 
+# Prevents npm commands in pnpm-based CI and container build flows.
+# This is to prevent running npm commands without supply chain safeguards
 deny contains finding if {
     some command in input.ciCommands
     project := project_for(command.projectRoot)
@@ -133,6 +142,7 @@ deny contains finding if {
     )
 }
 
+# Prevents Yarn, Bun, and Deno commands in CI and container build flows.
 deny contains finding if {
     some command in input.ciCommands
     uses_forbidden_manager(command.command)
@@ -144,6 +154,7 @@ deny contains finding if {
     )
 }
 
+# Prevents package scripts from invoking npm in pnpm projects.
 deny contains finding if {
     some project in input.projects
     some _, script in object.get(project.package, "scripts", {})
@@ -159,6 +170,8 @@ deny contains finding if {
     )
 }
 
+# Requires npm projects to declare engines.npm >=11.10.0.
+# These versions supports all the supply chain settings we want.
 deny contains finding if {
     some project in input.projects
     project.manager == "npm"
@@ -172,6 +185,7 @@ deny contains finding if {
     )
 }
 
+# Requires npm projects to have an applicable .npmrc alongside package.json.
 deny contains finding if {
     some project in input.projects
     project.manager == "npm"
@@ -184,6 +198,7 @@ deny contains finding if {
     )
 }
 
+# Enforces npm .npmrc safeguards for engines, exotic dependencies, and lifecycle scripts.
 deny contains finding if {
     some project in input.projects
     project.manager == "npm"
@@ -203,6 +218,7 @@ deny contains finding if {
     )
 }
 
+# Requires npm packages to be at least seven days old before they can be installed.
 deny contains finding if {
     some project in input.projects
     project.manager == "npm"
@@ -219,6 +235,7 @@ deny contains finding if {
     )
 }
 
+# Disallows npm through engines.npm in pnpm projects.
 deny contains finding if {
     some project in input.projects
     project.manager == "pnpm"
@@ -232,6 +249,8 @@ deny contains finding if {
     )
 }
 
+# Requires pnpm projects to declare engines.pnpm >=11.0.0.
+# These versions supports all the supply chain settings we want.
 deny contains finding if {
     some project in input.projects
     project.manager == "pnpm"
@@ -245,6 +264,7 @@ deny contains finding if {
     )
 }
 
+# Requires pnpm projects to have an applicable pnpm-workspace.yaml.
 deny contains finding if {
     some project in input.projects
     project.manager == "pnpm"
@@ -260,6 +280,7 @@ deny contains finding if {
     )
 }
 
+# Enables strict pnpm safeguards for engines, package age, exotic dependencies, and builds.
 deny contains finding if {
     some project in input.projects
     project.manager == "pnpm"
@@ -274,6 +295,7 @@ deny contains finding if {
     )
 }
 
+# Requires pnpm to fail when its configured package manager version does not match.
 deny contains finding if {
     some project in input.projects
     project.manager == "pnpm"
@@ -287,6 +309,7 @@ deny contains finding if {
     )
 }
 
+# Requires pnpm packages to be at least seven days (10,080 minutes) old.
 deny contains finding if {
     some project in input.projects
     project.manager == "pnpm"
@@ -305,6 +328,7 @@ deny contains finding if {
     )
 }
 
+# Prevents pnpm from allowing lifecycle builds for every dependency.
 deny contains finding if {
     some project in input.projects
     project.manager == "pnpm"

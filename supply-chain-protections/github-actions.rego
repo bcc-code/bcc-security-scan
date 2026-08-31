@@ -2,6 +2,7 @@ package supply_chain.policies
 
 import rego.v1
 
+# Requires workflows to declare scoped top-level permissions for the GitHub token.
 # deny contains msg if {
 #     some workflow in input.githubDocuments
 #     startswith(workflow.path, ".github/workflows/")
@@ -10,6 +11,7 @@ import rego.v1
 #     msg := sprintf("%s must declare scoped top-level permissions", [workflow.path])
 # }
 
+# Prevents unapproved write access in top-level GitHub token permissions.
 # deny contains msg if {
 #     some workflow in input.githubDocuments
 #     permissions := object.get(workflow.document, "permissions", {})
@@ -23,6 +25,7 @@ import rego.v1
 #     ])
 # }
 
+# Requires each job to use explicitly scoped GitHub token permissions.
 # deny contains msg if {
 #     some workflow in input.githubDocuments
 #     some job_name, job in object.get(workflow.document, "jobs", {})
@@ -34,6 +37,7 @@ import rego.v1
 #     ])
 # }
 
+# Prevents unapproved write access in job-level GitHub token permissions.
 # deny contains msg if {
 #     some workflow in input.githubDocuments
 #     some job_name, job in object.get(workflow.document, "jobs", {})
@@ -49,6 +53,8 @@ import rego.v1
 #     ])
 # }
 
+# Pins external GitHub Actions and any reusable workflows to immutable full commit SHAs.
+# Infra Platform reusable workflows are excepted from this rule
 deny contains finding if {
     some document in input.githubDocuments
     some _, node in walk(document.document)
@@ -71,6 +77,7 @@ deny contains finding if {
     }
 }
 
+# Pins Docker-based Actions to immutable SHA-256 image digests.
 deny contains finding if {
     some document in input.githubDocuments
     some _, node in walk(document.document)
