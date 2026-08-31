@@ -100,7 +100,7 @@ uses_forbidden_manager(command) if {
 }
 
 forbidden_lockfile(path) if {
-    endswith(path, "/yarn.lock") or path == "yarn.lock"
+    regex.match(`(^|/)yarn\.lock$`, path)
 }
 
 forbidden_lockfile(path) if {
