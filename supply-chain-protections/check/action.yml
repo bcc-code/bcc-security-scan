@@ -20,6 +20,16 @@ runs:
         repository: ${{ github.repository }}
         output: ${{ runner.temp }}/supply-chain-inventory.json
 
+    - name: Print repository inventory
+      shell: bash
+      env:
+        INVENTORY: ${{ steps.inventory.outputs.inventory }}
+      run: |
+        echo "::group::Repository inventory"
+        cat "$INVENTORY"
+        echo
+        echo "::endgroup::"
+
     - name: Install Conftest
       shell: bash
       env:
