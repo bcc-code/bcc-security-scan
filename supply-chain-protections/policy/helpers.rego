@@ -2,6 +2,15 @@ package supply_chain.policies
 
 import rego.v1
 
+policy_finding(message, file, policy_id) := {
+    "msg": message,
+    "_loc": {
+        "file": file,
+        "line": 1,
+    },
+    "policy_id": policy_id,
+}
+
 # approved_write(path, job, scope) if {
 #     scope in data.supply_chain.approved_writes[path][job]
 # }

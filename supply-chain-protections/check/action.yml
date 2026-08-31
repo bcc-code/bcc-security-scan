@@ -9,6 +9,14 @@ inputs:
     description: The path to the target folder that should be scanned
     default: "."
 
+outputs:
+  sarif:
+    description: Generated SARIF report
+    value: ${{ steps.evaluate.outputs.sarif }}
+  exit_code:
+    description: Conftest exit code
+    value: ${{ steps.evaluate.outputs.exit_code }}
+
 runs:
   using: "composite"
   steps:
@@ -55,6 +63,7 @@ runs:
         printf '%s\n' "$bin_dir" >> "$GITHUB_PATH"
 
     - name: Evaluate policy
+      id: evaluate
       shell: bash
       env:
         INVENTORY: ${{ steps.inventory.outputs.inventory }}
@@ -63,13 +72,14 @@ runs:
         set -euo pipefail
 
         policy_root="$(cd "$GITHUB_ACTION_PATH/.." && pwd)"
+        sarif="$RUNNER_TEMP/supply-chain-results.sarif"
 
         # --github-hide-passed should be added when conftest 0.70.0 is released or newer
         args=(
           test "$INVENTORY"
           --policy "$policy_root/policy"
           --namespace "supply_chain.*"
-          --output github
+          --output sarif
           --show-builtin-errors
         )
 
@@ -77,5 +87,55 @@ runs:
           args+=(--fail-on-warn)
         fi
 
-        conftest "${args[@]}"
+        set +e
+        conftest "${args[@]}" > "$sarif"
+        exit_code=$?
+        set -e
 
+        {
+          echo "sarif=$sarif"
+          echo "exit_code=$exit_code"
+        } >> "$GITHUB_OUTPUT"
+
+        scanned_sha="$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)"
+        echo "### Supply-chain policy findings" >> "$GITHUB_STEP_SUMMARY"
+
+        while IFS= read -r result; do
+          level="$(jq -r '.level // "warning"' <<< "$result")"
+          file="$(jq -r \
+            '.locations[0].physicalLocation.artifactLocation.uri // empty' \
+            <<< "$result")"
+          line="$(jq -r \
+            '.locations[0].physicalLocation.region.startLine // 1' \
+            <<< "$result")"
+          message="$(jq -r '.message.text' <<< "$result")"
+
+          case "$level" in
+            error) annotation="error" ;;
+            warning) annotation="warning" ;;
+            note) annotation="notice" ;;
+            *) continue ;;
+          esac
+
+          escaped_file="${file//'%'/'%25'}"
+          escaped_file="${escaped_file//$'\r'/'%0D'}"
+          escaped_file="${escaped_file//$'\n'/'%0A'}"
+          escaped_file="${escaped_file//':'/'%3A'}"
+          escaped_file="${escaped_file//','/'%2C'}"
+
+          escaped_message="${message//'%'/'%25'}"
+          escaped_message="${escaped_message//$'\r'/'%0D'}"
+          escaped_message="${escaped_message//$'\n'/'%0A'}"
+
+          printf '::%s file=%s,line=%s::%s\n' \
+            "$annotation" "$escaped_file" "$line" "$escaped_message"
+
+          encoded_file="$(jq -rn --arg path "$file" \
+            '$path | split("/") | map(@uri) | join("/")')"
+          url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$scanned_sha/$encoded_file#L$line"
+
+          printf -- '- [%s#L%s](%s): %s\n' \
+            "$file" "$line" "$url" "$message" >> "$GITHUB_STEP_SUMMARY"
+        done < <(
+          jq -c '.runs[].results[] | select(.level != "none")' "$sarif"
+        )

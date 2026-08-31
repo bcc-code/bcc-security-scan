@@ -23,6 +23,14 @@ jobs:
           fetch-depth: 1
 
       - name: Evaluate supply-chain policy
+        id: policy
         uses: $/supply-chain-protections/check
         with:
           fail-on-warn: ${{ inputs.fail-on-warn }}
+
+      - name: Enforce policy result
+        if: ${{ always() && steps.policy.outputs.exit_code != '0' }}
+        shell: bash
+        env:
+          POLICY_EXIT_CODE: ${{ steps.policy.outputs.exit_code }}
+        run: exit "$POLICY_EXIT_CODE"
