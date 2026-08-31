@@ -21,10 +21,8 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 1
-          path: ./target
 
       - name: Evaluate supply-chain policy
         uses: $/supply-chain-protections/check
         with:
           fail-on-warn: ${{ inputs.fail-on-warn }}
-          path: ./target

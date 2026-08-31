@@ -18,7 +18,7 @@ jobs:
   supply-chain:
     permissions:
       contents: read
-    uses: bcc-code/bcc-security-scan/supply-chain-protections.yml@<40_CHARACTER_SHA>
+    uses: bcc-code/bcc-security-scan/.github/workflows/supply-chain-protections.yml@<40_CHARACTER_SHA>
     with:
       fail-on-warn: true
 ```
