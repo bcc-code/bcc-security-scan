@@ -2,9 +2,9 @@ package supply_chain.policies
 
 import rego.v1
 
-approved_write(path, job, scope) if {
-    scope in data.supply_chain.approved_writes[path][job]
-}
+# approved_write(path, job, scope) if {
+#     scope in data.supply_chain.approved_writes[path][job]
+# }
 
 tracked(path) if {
     path in input.trackedFiles

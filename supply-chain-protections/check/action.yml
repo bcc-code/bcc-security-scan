@@ -58,7 +58,6 @@ runs:
         args=(
           test "$INVENTORY"
           --policy "$policy_root/policy"
-          --data "$policy_root/data"
           --namespace "supply_chain.*"
           --output github
           --show-builtin-errors
