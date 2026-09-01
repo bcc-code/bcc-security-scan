@@ -33,15 +33,16 @@ pnpm_requirement_reason := {
 # Recommends setting packageManagerStrictVersion to true for pnpm to prevent old versions from being used.
 # Note that new versions have deprecated this setting, but old versions don't understand the new setting.
 warn contains finding if {
-    message_part1 := sprintf("%s should set packageManagerStrictVersion=true.", [project.workspacePath])
-    message_part2 := "This prevents older pnpm versions from ignoring unsupported supply-chain settings."
     some project in input.projects
     project.manager == "pnpm"
     project.workspacePath != ""
     not true_value(object.get(project.workspace, "packageManagerStrictVersion", false))
 
     finding := policy_finding(
-        concat(" ", [message_part1, message_part2]),
+        concat(" ", [
+            sprintf("%s should set packageManagerStrictVersion=true.", [project.workspacePath]),
+            "This prevents older pnpm versions from ignoring unsupported supply-chain settings.",
+        ]),
         project.workspacePath,
         "javascript/pnpm-workspace-packageManagerStrictVersion",
     )
