@@ -40,11 +40,29 @@ warn contains finding if {
 
     finding := policy_finding(
         concat(" ", [
-            sprintf("%s should set packageManagerStrictVersion=true.", [project.workspacePath]),
+            sprintf("%s should set packageManagerStrictVersion: true.", [project.workspacePath]),
             "This prevents older pnpm versions from ignoring unsupported supply-chain settings.",
         ]),
         project.workspacePath,
         "javascript/pnpm-workspace-packageManagerStrictVersion",
+    )
+}
+
+# Recommends preventing pnpm from accepting packages whose trust level has decreased.
+warn contains finding if {
+    some project in input.projects
+    project.manager == "pnpm"
+    project.workspacePath != ""
+    object.get(project.workspace, "trustPolicy", "") != "no-downgrade"
+
+    finding := policy_finding(
+        concat(" ", [
+            sprintf("%s should set trustPolicy: no-downgrade.", [project.workspacePath]),
+            "This prevents installing a package version when its trust level",
+            "is lower than previously published versions.",
+        ]),
+        project.workspacePath,
+        "javascript/pnpm-workspace-trust-policy",
     )
 }
 
@@ -402,7 +420,7 @@ deny contains finding if {
 
     finding := policy_finding(
         concat(" ", [
-            sprintf("%s must set %s=true.", [project.workspacePath, key]),
+            sprintf("%s must set %s: true.", [project.workspacePath, key]),
             pnpm_requirement_reason[key],
         ]),
         project.workspacePath,
@@ -419,7 +437,7 @@ deny contains finding if {
 
     finding := policy_finding(
         concat(" ", [
-            sprintf("%s must set pmOnFail=error", [project.workspacePath]),
+            sprintf("%s must set pmOnFail: error", [project.workspacePath]),
             "so pnpm stops when the configured package-manager version cannot be used.",
         ]),
         project.workspacePath,
@@ -460,7 +478,7 @@ deny contains finding if {
 
     finding := policy_finding(
         concat(" ", [
-            sprintf("%s must not set dangerouslyAllowAllBuilds=true.", [project.workspacePath]),
+            sprintf("%s must not set dangerouslyAllowAllBuilds: true.", [project.workspacePath]),
             "Dependency lifecycle scripts must be blocked by default",
             "and enabled only for reviewed packages.",
         ]),
