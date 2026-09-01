@@ -16,6 +16,23 @@ pnpm_true_required := {
     "strictDepBuilds",
 }
 
+# Recommends setting packageManagerStrictVersion to true for pnpm to prevent old versions from being used.
+# Note that new versions have deprecated this setting, but old versions don't understand the new setting.
+warn contains finding if {
+    message_part1 := sprintf("It is recommended that %s sets packageManagerStrictVersion=true", [project.workspacePath])
+    message_part2 := "to prevent pnpm versions that don't understand the new setting from running."
+    some project in input.projects
+    project.manager == "pnpm"
+    project.workspacePath != ""
+    not true_value(object.get(project.workspace, "packageManagerStrictVersion", false))
+
+    finding := policy_finding(
+        concat(" ", [message_part1, message_part2]),
+        project.workspacePath,
+        "javascript/pnpm-workspace-packageManagerStrictVersion",
+    )
+}
+
 # Recommends pnpm over npm because pnpm provides stronger supply-chain controls.
 warn contains finding if {
     some project in input.projects
