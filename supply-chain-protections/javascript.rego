@@ -9,6 +9,13 @@ npmrc_required := {
     "ignore-scripts": "true",
 }
 
+npmrc_requirement_reason := {
+    "engine-strict": "This rejects packages that require an incompatible NPM or Node.js version.",
+    "allow-git": "This blocks transitive dependencies fetched from Git repositories.",
+    "allow-remote": "This blocks transitive dependencies fetched from remote URLs.",
+    "ignore-scripts": "This disables dependency lifecycle scripts by default.",
+}
+
 pnpm_true_required := {
     "engineStrict",
     "minimumReleaseAgeStrict",
@@ -16,11 +23,18 @@ pnpm_true_required := {
     "strictDepBuilds",
 }
 
+pnpm_requirement_reason := {
+    "engineStrict": "This rejects packages that require an incompatible PNPM or Node.js version.",
+    "minimumReleaseAgeStrict": "This applies the minimum release age to all dependency versions.",
+    "blockExoticSubdeps": "This blocks transitive Git and remote URL dependencies.",
+    "strictDepBuilds": "This fails when a dependency lifecycle script has not been reviewed.",
+}
+
 # Recommends setting packageManagerStrictVersion to true for pnpm to prevent old versions from being used.
 # Note that new versions have deprecated this setting, but old versions don't understand the new setting.
 warn contains finding if {
-    message_part1 := sprintf("It is recommended that %s sets packageManagerStrictVersion=true", [project.workspacePath])
-    message_part2 := "to prevent pnpm versions that don't understand the new setting from running."
+    message_part1 := sprintf("%s should set packageManagerStrictVersion=true.", [project.workspacePath])
+    message_part2 := "This prevents older pnpm versions from ignoring unsupported supply-chain settings."
     some project in input.projects
     project.manager == "pnpm"
     project.workspacePath != ""
@@ -39,7 +53,10 @@ warn contains finding if {
     project.manager == "npm"
 
     finding := policy_finding(
-        sprintf("%s uses npm; pnpm is preferred", [project.root]),
+        concat(" ", [
+            sprintf("%s uses npm.", [project.root]),
+            "pnpm is recommended because it provides stronger supply-chain protections.",
+        ]),
         project.packagePath,
         "javascript/prefer-pnpm",
     )
@@ -52,8 +69,8 @@ deny contains finding if {
     project.manager != "pnpm"
 
     finding := policy_finding(
-        sprintf("%s uses unsupported package manager %s", [
-            project.root,
+        sprintf("%s configures the unsupported package manager %q. Use pnpm (recommended) or npm.", [
+            project.packagePath,
             project.manager,
         ]),
         project.packagePath,
@@ -68,7 +85,10 @@ deny contains finding if {
     project.lockfilePath == ""
 
     finding := policy_finding(
-        sprintf("%s requires an applicable lockfile", [project.packagePath]),
+        concat(" ", [
+            sprintf("%s has no applicable lockfile.", [project.packagePath]),
+            "Generate the lockfile for the configured package manager and commit it to version control.",
+        ]),
         project.packagePath,
         "javascript/lockfile-required",
     )
@@ -82,7 +102,10 @@ deny contains finding if {
     tracked(package_lock)
 
     finding := policy_finding(
-        sprintf("%s must not contain package-lock.json, it is managed using pnpm", [project.root]),
+        concat(" ", [
+            sprintf("%s is configured for pnpm but contains package-lock.json.", [project.root]),
+            "Remove package-lock.json and use pnpm-lock.yaml only.",
+        ]),
         package_lock,
         "javascript/pnpm-package-lock-forbidden",
     )
@@ -94,7 +117,10 @@ deny contains finding if {
     forbidden_lockfile(path)
 
     finding := policy_finding(
-        sprintf("Unsupported package-manager lockfile: %s. You should not use this package manager.", [path]),
+        concat(" ", [
+            sprintf("%s belongs to an unsupported package manager.", [path]),
+            "Remove it and use pnpm (recommended) or npm with their respective lockfile.",
+        ]),
         path,
         "javascript/unsupported-lockfile",
     )
@@ -109,9 +135,10 @@ deny contains finding if {
     not lockfile in build.copiedFiles
 
     finding := policy_finding(
-        sprintf("%s does not copy %s into its build context", [
-            build.path,
-            lockfile,
+        concat(" ", [
+            sprintf("%s does not copy %s.", [build.path, lockfile]),
+            "Copy the lockfile before installing dependencies",
+            "so the container build uses the locked versions.",
         ]),
         build.path,
         "javascript/container-lockfile-copy",
@@ -126,7 +153,10 @@ deny contains finding if {
     not true_value(object.get(command.env, "CI", false))
 
     finding := policy_finding(
-        sprintf("%s must set CI=true before pnpm commands", [command.path]),
+        concat(" ", [
+            sprintf("%s runs pnpm without CI=true.", [command.path]),
+            "Set CI=true before running pnpm in CI and container builds.",
+        ]),
         command.path,
         "javascript/pnpm-ci-environment",
     )
@@ -138,7 +168,10 @@ deny contains finding if {
     npm_install(command.command)
 
     finding := policy_finding(
-        sprintf("%s must use npm ci instead of npm install", [command.path]),
+        concat(" ", [
+            sprintf("%s runs npm install in a CI or container build.", [command.path]),
+            "Use npm ci for a clean, lockfile-based install.",
+        ]),
         command.path,
         "javascript/npm-ci-required",
     )
@@ -146,20 +179,17 @@ deny contains finding if {
 
 # Prevents dynamic package installs and execution in CI and container build flows.
 deny contains finding if {
-    inline_install_remediation1 :=
-    "Instead of npx/pnpx, add a package script that references the binary directly, without npx/pnpx."
-    inline_install_remediation2 :=
-    "Using npx/pnpx prefix is not required within package scripts and adds risks."
     some command in input.ciCommands
     uses_inline_install(command.command)
 
-    message := sprintf(
-        "%s installs or executes a package inline.",
-        [command.path],
-    )
+    message := concat(" ", [
+        sprintf("%s installs or executes a package inline.", [command.path]),
+        "Add the tool as a project dependency and invoke its binary",
+        "through a package script instead. Using npx/pnpx adds risks.",
+    ])
 
     finding := policy_finding(
-        concat(" ", [message, inline_install_remediation1, inline_install_remediation2]),
+        message,
         command.path,
         "javascript/inline-package-install",
     )
@@ -174,7 +204,11 @@ deny contains finding if {
     uses_npm(command.command)
 
     finding := policy_finding(
-        sprintf("%s uses npm in a pnpm project", [command.path]),
+        concat(" ", [
+            sprintf("%s runs npm or npx in a pnpm project.", [command.path]),
+            "Use the equivalent pnpm command so the pnpm lockfile",
+            "and security settings are enforced.",
+        ]),
         command.path,
         "javascript/npm-command-in-pnpm-ci",
     )
@@ -186,7 +220,10 @@ deny contains finding if {
     uses_forbidden_manager(command.command)
 
     finding := policy_finding(
-        sprintf("%s uses an unsupported package manager", [command.path]),
+        concat(" ", [
+            sprintf("%s runs Yarn, Bun, or Deno in a CI or container build.", [command.path]),
+            "Use only pnpm (recommended) or npm.",
+        ]),
         command.path,
         "javascript/unsupported-ci-package-manager",
     )
@@ -194,21 +231,18 @@ deny contains finding if {
 
 # Prevents package scripts from installing or executing packages inline.
 deny contains finding if {
-    inline_install_remediation1 :=
-    "If using npx/pnpx or similar, drop using it and call binary directly."
-    inline_install_remediation2 :=
-    "Using npx/pnpx prefix is not required within package scripts and adds risks."
     some project in input.projects
     some _, script in object.get(project.package, "scripts", {})
     uses_inline_install(script)
 
-    message := sprintf(
-        "%s contains an inline package install or execution.",
-        [project.packagePath],
-    )
+    message := concat(" ", [
+        sprintf("%s contains a script that installs or executes a package inline.", [project.packagePath]),
+        "Add the tool as a project dependency and invoke its binary directly;",
+        "package scripts resolve local binaries automatically. Npx/Pnpx adds risks.",
+    ])
 
     finding := policy_finding(
-        concat(" ", [message, inline_install_remediation1, inline_install_remediation2]),
+        message,
         project.packagePath,
         "javascript/inline-package-install-script",
     )
@@ -222,8 +256,9 @@ deny contains finding if {
     uses_npm(script)
 
     finding := policy_finding(
-        sprintf("%s contains an npm command in package scripts", [
-            project.packagePath,
+        concat(" ", [
+            sprintf("%s contains a package script that runs npm or npx.", [project.packagePath]),
+            "The project uses pnpm; use the equivalent pnpm command instead.",
         ]),
         project.packagePath,
         "javascript/npm-command-in-pnpm-script",
@@ -239,7 +274,10 @@ deny contains finding if {
     not engine_at_least(object.get(engines, "npm", ""), "11.10.0")
 
     finding := policy_finding(
-        sprintf("%s must require npm >=11.10.0", [project.packagePath]),
+        concat(" ", [
+            sprintf("%s must set engines.npm to exclude versions older than 11.10.0.", [project.packagePath]),
+            "Older npm versions do not support the required supply-chain protections.",
+        ]),
         project.packagePath,
         "javascript/minimum-npm-version",
     )
@@ -252,7 +290,11 @@ deny contains finding if {
     project.npmrcPath == ""
 
     finding := policy_finding(
-        sprintf("%s requires an applicable .npmrc", [project.packagePath]),
+        concat(" ", [
+            sprintf("%s has no applicable .npmrc.", [project.packagePath]),
+            "Add and commit an .npmrc containing the required npm supply-chain settings.",
+            "Rerun this checker after adding it to get them listed.",
+        ]),
         project.packagePath,
         "javascript/npmrc-required",
     )
@@ -268,10 +310,9 @@ deny contains finding if {
     actual != expected
 
     finding := policy_finding(
-        sprintf("%s must set %s=%s", [
-            project.npmrcPath,
-            key,
-            expected,
+        concat(" ", [
+            sprintf("%s must set %s=%s.", [project.npmrcPath, key, expected]),
+            npmrc_requirement_reason[key],
         ]),
         project.npmrcPath,
         sprintf("javascript/npmrc-%s", [key]),
@@ -289,7 +330,10 @@ deny contains finding if {
     )
 
     finding := policy_finding(
-        sprintf("%s must set min-release-age>=7", [project.npmrcPath]),
+        concat(" ", [
+            sprintf("%s must set min-release-age to at least 7.", [project.npmrcPath]),
+            "Packages must not be installed until seven days after publication.",
+        ]),
         project.npmrcPath,
         "javascript/npmrc-min-release-age",
     )
@@ -303,7 +347,10 @@ deny contains finding if {
     object.get(engines, "npm", "") != "disallow"
 
     finding := policy_finding(
-        sprintf("%s must set engines.npm to disallow", [project.packagePath]),
+        concat(" ", [
+            sprintf("%s must set engines.npm=disallow because the project uses pnpm.", [project.packagePath]),
+            "This prevents tools and automation from falling back to npm.",
+        ]),
         project.packagePath,
         "javascript/pnpm-disallow-npm",
     )
@@ -318,7 +365,10 @@ deny contains finding if {
     not engine_at_least(object.get(engines, "pnpm", ""), "11.0.0")
 
     finding := policy_finding(
-        sprintf("%s must require pnpm >=11.0.0", [project.packagePath]),
+        concat(" ", [
+            sprintf("%s must set engines.pnpm to exclude versions older than 11.0.0.", [project.packagePath]),
+            "Older pnpm versions do not support the required supply-chain protections.",
+        ]),
         project.packagePath,
         "javascript/minimum-pnpm-version",
     )
@@ -331,10 +381,11 @@ deny contains finding if {
     project.workspacePath == ""
 
     finding := policy_finding(
-        sprintf(
-            "%s requires an applicable pnpm-workspace.yaml",
-            [project.packagePath],
-        ),
+        concat(" ", [
+            sprintf("%s has no applicable pnpm-workspace.yaml.", [project.packagePath]),
+            "Add and commit one containing the required pnpm supply-chain settings.",
+            "Rerun this checker after adding it to get them listed.",
+        ]),
         project.packagePath,
         "javascript/pnpm-workspace-required",
     )
@@ -349,7 +400,10 @@ deny contains finding if {
     not true_value(object.get(project.workspace, key, false))
 
     finding := policy_finding(
-        sprintf("%s must set %s=true", [project.workspacePath, key]),
+        concat(" ", [
+            sprintf("%s must set %s=true.", [project.workspacePath, key]),
+            pnpm_requirement_reason[key],
+        ]),
         project.workspacePath,
         sprintf("javascript/pnpm-workspace-%s", [key]),
     )
@@ -363,7 +417,10 @@ deny contains finding if {
     object.get(project.workspace, "pmOnFail", "") != "error"
 
     finding := policy_finding(
-        sprintf("%s must set pmOnFail=error", [project.workspacePath]),
+        concat(" ", [
+            sprintf("%s must set pmOnFail=error", [project.workspacePath]),
+            "so pnpm stops when the configured package-manager version cannot be used.",
+        ]),
         project.workspacePath,
         "javascript/pnpm-workspace-pm-on-fail",
     )
@@ -380,8 +437,9 @@ deny contains finding if {
     )
 
     finding := policy_finding(
-        sprintf("%s must set minimumReleaseAge>=10080", [
-            project.workspacePath,
+        concat(" ", [
+            sprintf("%s must set minimumReleaseAge to at least 10080 minutes", [project.workspacePath]),
+            "(seven days) so newly published packages cannot be installed.",
         ]),
         project.workspacePath,
         "javascript/pnpm-workspace-minimum-release-age",
@@ -400,8 +458,10 @@ deny contains finding if {
     ))
 
     finding := policy_finding(
-        sprintf("%s must not allow all dependency builds", [
-            project.workspacePath,
+        concat(" ", [
+            sprintf("%s must not set dangerouslyAllowAllBuilds=true.", [project.workspacePath]),
+            "Dependency lifecycle scripts must be blocked by default",
+            "and enabled only for reviewed packages.",
         ]),
         project.workspacePath,
         "javascript/pnpm-workspace-dangerous-builds",
