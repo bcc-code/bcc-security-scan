@@ -71,3 +71,61 @@ test_engine_at_least_rejects_unsafe_ranges if {
         not policies.engine_at_least(constraint, "11.10.0")
     }
 }
+test_pnpm_declared_version_accepts_safe_declarations if {
+    every manifest in [
+        {"packageManager": "pnpm@11.0.0"},
+        {"packageManager": "pnpm@11.2.1+sha512.abc123"},
+        {"devEngines": {"packageManager": {"name": "pnpm", "version": "^11.0.0"}}},
+        {"devEngines": {"packageManager": [{"name": "pnpm", "version": ">=11.1.0"}]}},
+        {
+            "packageManager": "pnpm@11.0.0",
+            "devEngines": {"packageManager": {"name": "pnpm", "version": "^11.0.0"}},
+        },
+    ] {
+        policies.pnpm_declared_version_at_least(manifest, "11.0.0")
+    }
+}
+
+test_pnpm_declared_version_rejects_missing_or_old_declarations if {
+    every manifest in [
+        {},
+        {"packageManager": "pnpm@10.12.1"},
+        {"packageManager": "npm@11.10.0"},
+        {"packageManager": "pnpm@latest"},
+        {"devEngines": {"packageManager": {"name": "pnpm", "version": "^10.0.0 || ^11.0.0"}}},
+        {"devEngines": {"packageManager": {"name": "npm", "version": ">=11.10.0"}}},
+        {
+            "packageManager": "pnpm@11.0.0",
+            "devEngines": {"packageManager": {"name": "pnpm", "version": "^10.0.0"}},
+        },
+    ] {
+        not policies.pnpm_declared_version_at_least(manifest, "11.0.0")
+    }
+}
+
+pnpm_download_project(manifest) := {
+    "manager": "pnpm",
+    "workspacePath": "pnpm-workspace.yaml",
+    "workspace": {"pmOnFail": "download"},
+    "packagePath": "manifest.json",
+    "package": manifest,
+}
+
+pnpm_download_denied(manifest) if {
+    some finding in policies.deny with input as {"projects": [pnpm_download_project(manifest)]}
+    finding.policy_id == "javascript/pnpm-download-version"
+}
+
+test_pnpm_download_requires_declared_version if {
+    pnpm_download_denied({})
+    pnpm_download_denied({"packageManager": "pnpm@10.12.1"})
+    not pnpm_download_denied({"packageManager": "pnpm@11.0.0"})
+}
+
+test_pnpm_error_does_not_require_declared_version if {
+    project := object.union(pnpm_download_project({}), {"workspace": {"pmOnFail": "error"}})
+    findings := policies.deny with input as {"projects": [project]}
+    every finding in findings {
+        finding.policy_id != "javascript/pnpm-download-version"
+    }
+}

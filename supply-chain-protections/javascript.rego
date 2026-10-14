@@ -447,6 +447,25 @@ deny contains finding if {
     )
 }
 
+# Requires package.json to declare pnpm 11.0.0 or newer when pmOnFail is download,
+# since pnpm downloads and runs the declared version.
+deny contains finding if {
+    some project in input.projects
+    project.manager == "pnpm"
+    project.workspacePath != ""
+    object.get(project.workspace, "pmOnFail", "") == "download"
+    not pnpm_declared_version_at_least(object.get(project, "package", {}), "11.0.0")
+
+    finding := policy_finding(
+        concat(" ", [
+            sprintf("%s must declare pnpm 11.0.0 or newer in packageManager or devEngines.packageManager", [project.packagePath]),
+            "when pmOnFail is download, so pnpm does not download a version without the required supply-chain protections.",
+        ]),
+        project.packagePath,
+        "javascript/pnpm-download-version",
+    )
+}
+
 # Requires pnpm packages to be at least seven days (10,080 minutes) old.
 deny contains finding if {
     some project in input.projects

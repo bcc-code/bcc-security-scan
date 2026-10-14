@@ -149,6 +149,42 @@ wildcard_to_zero(part) := part if {
     not part in {"x", "X", "*"}
 }
 
+# Collects the pnpm version constraints that package.json declares through
+# packageManager or devEngines.packageManager.
+pnpm_declared_versions(manifest) := package_manager_versions(manifest) | dev_engine_pnpm_versions(manifest)
+
+package_manager_versions(manifest) := {version |
+    spec := object.get(manifest, "packageManager", "")
+    is_string(spec)
+    match := regex.find_all_string_submatch_n(`^pnpm@([^+\s]+)(?:\+\S+)?$`, trim_space(spec), 1)
+    version := match[0][1]
+}
+
+dev_engine_pnpm_versions(manifest) := {version |
+    dev_engines := object.get(manifest, "devEngines", {})
+    is_object(dev_engines)
+    some entry in dev_engine_entries(object.get(dev_engines, "packageManager", []))
+    is_object(entry)
+    entry.name == "pnpm"
+    version := object.get(entry, "version", "")
+}
+
+dev_engine_entries(value) := value if {
+    is_array(value)
+}
+
+dev_engine_entries(value) := [value] if {
+    is_object(value)
+}
+
+pnpm_declared_version_at_least(manifest, minimum) if {
+    versions := pnpm_declared_versions(manifest)
+    count(versions) > 0
+    every version in versions {
+        engine_at_least(version, minimum)
+    }
+}
+
 true_value(value) if {
     value == true
 }
