@@ -23,6 +23,8 @@ pnpm_true_required := {
     "strictDepBuilds",
 }
 
+pnpm_allowed_pm_on_fail := {"error", "download"}
+
 pnpm_requirement_reason := {
     "engineStrict": "This rejects packages that require an incompatible PNPM or Node.js version.",
     "minimumReleaseAgeStrict": "This applies the minimum release age to all dependency versions.",
@@ -428,17 +430,17 @@ deny contains finding if {
     )
 }
 
-# Requires pnpm to fail when its configured package manager version does not match.
+# Requires pnpm to either fail or download the configured package manager version when it does not match.
 deny contains finding if {
     some project in input.projects
     project.manager == "pnpm"
     project.workspacePath != ""
-    object.get(project.workspace, "pmOnFail", "") != "error"
+    not object.get(project.workspace, "pmOnFail", "") in pnpm_allowed_pm_on_fail
 
     finding := policy_finding(
         concat(" ", [
-            sprintf("%s must set pmOnFail: error", [project.workspacePath]),
-            "so pnpm stops when the configured package-manager version cannot be used.",
+            sprintf("%s must set pmOnFail to error or download", [project.workspacePath]),
+            "so pnpm either stops or downloads the configured package-manager version instead of running with a mismatched one.",
         ]),
         project.workspacePath,
         "javascript/pnpm-workspace-pm-on-fail",
