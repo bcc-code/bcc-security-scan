@@ -38,9 +38,31 @@ path_for(root, name) := sprintf("%s/%s", [trim(root, "/"), name]) if {
     root != "."
 }
 
+directory_of(path) := "." if {
+    not contains(path, "/")
+}
+
+directory_of(path) := regex.replace(path, `/[^/]+$`, "") if {
+    contains(path, "/")
+}
+
+# pnpm reads packageManager and devEngines.packageManager only from the
+# package.json next to pnpm-workspace.yaml, not from workspace sub-packages.
+workspace_package_path(project) := path_for(directory_of(project.workspacePath), "package.json")
+
+workspace_package(project) := root.package if {
+    root := project_for(directory_of(project.workspacePath))
+}
+
+workspace_package(project) := {} if {
+    not project_for(directory_of(project.workspacePath))
+}
+
 # ---------------------------------------------------------------------------
 # GitHub Actions references
 # ---------------------------------------------------------------------------
+
+github_document_paths := {document.path | some document in input.githubDocuments}
 
 # Every `uses:` value in a workflow or action document,
 # covering steps, reusable workflow jobs, and composite actions.
@@ -161,11 +183,18 @@ package_manager_pinned_at_least(package_document, manager, minimum) if {
     semver.compare(pin.version, minimum) >= 0
 }
 
-# Also requires a SHA-512 hash of the release, as written by `corepack use`,
-# which Corepack checks before running the release.
-package_manager_hash_pinned_at_least(package_document, manager, minimum) if {
-    package_manager_pinned_at_least(package_document, manager, minimum)
-    regex.match(`^sha512\.[0-9a-f]{128}$`, package_manager_pin(package_document).hash)
+# devEngines.packageManager must name an exact version. pnpm records that release's
+# integrity in pnpm-lock.yaml and refuses to run a release that does not match it.
+# A range would switch to whichever matching release is newest.
+dev_engines_pinned_at_least(package_document, manager, minimum) if {
+    dev_engines := object.get(package_document, "devEngines", {})
+    package_manager := object.get(dev_engines, "packageManager", {})
+    is_object(package_manager)
+    object.get(package_manager, "name", "") == manager
+    version := object.get(package_manager, "version", "")
+    is_string(version)
+    regex.match(`^[0-9]+\.[0-9]+\.[0-9]+$`, version)
+    semver.compare(version, minimum) >= 0
 }
 
 # Older pnpm versions ignore the packageManager version but refuse to run

@@ -153,18 +153,26 @@ test_action_references_finds_nested_uses if {
     }
 }
 
-test_package_manager_hash_pinned_at_least_requires_sha512_hash if {
-    policies.package_manager_hash_pinned_at_least(
-        {"packageManager": "pnpm@11.2.3+sha512.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+test_dev_engines_pinned_at_least_requires_exact_version if {
+    policies.dev_engines_pinned_at_least(
+        {"devEngines": {"packageManager": {"name": "pnpm", "version": "11.2.3"}}},
         "pnpm",
         "11.0.0",
     )
     every package_document in [
+        {},
         {"packageManager": "pnpm@11.2.3"},
-        {"packageManager": "pnpm@11.2.3+sha512.abc123"},
-        {"packageManager": "pnpm@11.2.3+sha256.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-        {"packageManager": "pnpm@10.30.0+sha512.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        {"devEngines": {"packageManager": {"name": "pnpm", "version": "^11.0.0"}}},
+        {"devEngines": {"packageManager": {"name": "pnpm", "version": "11"}}},
+        {"devEngines": {"packageManager": {"name": "pnpm", "version": "10.30.0"}}},
+        {"devEngines": {"packageManager": {"name": "npm", "version": "11.10.0"}}},
+        {"devEngines": {"packageManager": [{"name": "pnpm", "version": "11.2.3"}]}},
     ] {
-        not policies.package_manager_hash_pinned_at_least(package_document, "pnpm", "11.0.0")
+        not policies.dev_engines_pinned_at_least(package_document, "pnpm", "11.0.0")
     }
+}
+
+test_directory_of if {
+    policies.directory_of("pnpm-workspace.yaml") == "."
+    policies.directory_of("apps/web/pnpm-workspace.yaml") == "apps/web"
 }
