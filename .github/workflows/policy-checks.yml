@@ -1,0 +1,75 @@
+name: Policy checks
+
+on:
+  pull_request:
+    branches:
+      - policy-v1
+  push:
+    branches:
+      - policy-v1
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read  # This is required for actions/checkout
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Install OPA and Conftest
+        shell: bash
+        env:
+          # Conftest's OPA version, so formatting and parsing match the check action.
+          OPA_VERSION: 1.19.0
+          OPA_SHA256: "1dd5c5591ff856f5e20a1d66bafae9511ddf3c5552ed3b5070c70b2b6580ee3f"
+          CONFTEST_VERSION: 0.69.0
+          CONFTEST_SHA256: "96fc2fbf11f0afde51256647127e6f00a64ce839a4d9a0a1aef2426c0e6f4b3f"
+        run: |
+          set -euo pipefail
+
+          bin_dir="$RUNNER_TEMP/policy-tools"
+          mkdir -p "$bin_dir"
+
+          curl --fail --location --silent --show-error \
+            "https://github.com/open-policy-agent/opa/releases/download/v${OPA_VERSION}/opa_linux_amd64_static" \
+            --output "$bin_dir/opa"
+
+          if ! printf '%s  %s\n' "$OPA_SHA256" "$bin_dir/opa" | sha256sum --check --status -; then
+            echo "::error::OPA checksum verification failed"
+            exit 1
+          fi
+
+          chmod +x "$bin_dir/opa"
+
+          archive="$RUNNER_TEMP/conftest.tar.gz"
+
+          curl --fail --location --silent --show-error \
+            "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz" \
+            --output "$archive"
+
+          if ! printf '%s  %s\n' "$CONFTEST_SHA256" "$archive" | sha256sum --check --status -; then
+            echo "::error::Conftest checksum verification failed"
+            exit 1
+          fi
+
+          tar -xzf "$archive" -C "$bin_dir" conftest
+          printf '%s\n' "$bin_dir" >> "$GITHUB_PATH"
+
+      - name: Check formatting
+        shell: bash
+        run: |
+          if ! opa fmt --list --fail supply-chain-protections; then
+            echo "::error::Run 'opa fmt --write supply-chain-protections' to format the files listed above."
+            exit 1
+          fi
+
+      - name: Run policy tests
+        shell: bash
+        run: conftest verify --policy supply-chain-protections
