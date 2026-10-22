@@ -58,6 +58,19 @@ workspace_package(project) := {} if {
 	not project_for(directory_of(project.workspacePath))
 }
 
+# True for the package.json next to pnpm-workspace.yaml, and for projects without one.
+is_workspace_root(project) if {
+	project.workspacePath == ""
+}
+
+is_workspace_root(project) if {
+	project.root == directory_of(project.workspacePath)
+}
+
+in_pnpm_project(command) if {
+	project_for(command.projectRoot).manager == "pnpm"
+}
+
 # ---------------------------------------------------------------------------
 # GitHub Actions references
 # ---------------------------------------------------------------------------
@@ -156,25 +169,6 @@ wildcard_to_zero(part) := part if {
 	not part in {"x", "X", "*"}
 }
 
-# Splits an exact packageManager pin (`name@x.y.z`, optionally `+sha512.<hex>`)
-# into its name, version, and hash. Ranges and partial versions do not match.
-package_manager_pin(package_document) := {"name": match[1], "version": match[2], "hash": match[3]} if {
-	value := object.get(package_document, "packageManager", "")
-	is_string(value)
-	match := regex.find_all_string_submatch_n(
-		`^([a-z]+)@([0-9]+\.[0-9]+\.[0-9]+)(?:\+(sha[0-9]+\.[0-9a-f]+))?$`,
-		value,
-		1,
-	)[0]
-}
-
-# packageManager must pin an exact version, which Corepack and pnpm use to run that exact release.
-package_manager_pinned_at_least(package_document, manager, minimum) if {
-	pin := package_manager_pin(package_document)
-	pin.name == manager
-	semver.compare(pin.version, minimum) >= 0
-}
-
 # devEngines.packageManager must name an exact version. pnpm records that release's
 # integrity in pnpm-lock.yaml and refuses to run a release that does not match it.
 # A range would switch to whichever matching release is newest.
@@ -182,19 +176,26 @@ dev_engines_pinned_at_least(package_document, manager, minimum) if {
 	dev_engines := object.get(package_document, "devEngines", {})
 	package_manager := object.get(dev_engines, "packageManager", {})
 	is_object(package_manager)
-	object.get(package_manager, "name", "") == manager
-	version := object.get(package_manager, "version", "")
+	is_exact_pin(package_manager, manager, minimum)
+}
+
+is_exact_pin(entry, manager, minimum) if {
+	object.get(entry, "name", "") == manager
+	version := object.get(entry, "version", "")
 	is_string(version)
 	regex.match(`^[0-9]+\.[0-9]+\.[0-9]+$`, version)
 	semver.compare(version, minimum) >= 0
 }
 
-# Older pnpm versions ignore the packageManager version but refuse to run
-# when engines.pnpm excludes them, so both are needed to prove the version.
-pnpm_version_proven(package_document, minimum) if {
-	package_manager_pinned_at_least(package_document, "pnpm", minimum)
-	engines := object.get(package_document, "engines", {})
-	engine_at_least(object.get(engines, "pnpm", ""), minimum)
+# devEngines.packageManager may be one entry or a list of entries.
+dev_engines_package_managers(package_document) := [package_manager] if {
+	package_manager := object.get(object.get(package_document, "devEngines", {}), "packageManager", null)
+	is_object(package_manager)
+}
+
+dev_engines_package_managers(package_document) := package_managers if {
+	package_managers := object.get(object.get(package_document, "devEngines", {}), "packageManager", null)
+	is_array(package_managers)
 }
 
 # ---------------------------------------------------------------------------

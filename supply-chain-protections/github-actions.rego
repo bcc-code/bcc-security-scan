@@ -6,8 +6,7 @@ import rego.v1
 
 # Requires external actions and reusable workflows to be pinned to a full commit SHA,
 # because tags and branches can be moved to point at different code.
-# Check action versions up to v1.0.1 group findings by this message's ending,
-# so keep it unchanged while those versions are in use.
+# The check action groups findings by this message's ending; keep it unchanged.
 deny contains finding if {
 	some document in input.githubDocuments
 	some reference in action_references(document.document)

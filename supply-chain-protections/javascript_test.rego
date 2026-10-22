@@ -123,3 +123,118 @@ test_pnpm_npmrc_accepts_engine_strict if {
 	not "javascript/pnpm-npmrc-required" in finding_ids(findings)
 	not "javascript/pnpm-npmrc-engine-strict" in finding_ids(findings)
 }
+
+sub_package := object.union(pnpm_project, {
+	"root": "apps/web",
+	"packagePath": "apps/web/package.json",
+	"npmrcPath": "apps/web/.npmrc",
+})
+
+# npm reads only the .npmrc next to the package it runs in.
+test_pnpm_npmrc_is_required_next_to_every_package if {
+	inherited := object.union(sub_package, {"npmrcPath": ".npmrc"})
+	findings := policies.deny with input as {"projects": [pnpm_project, inherited]}
+	some finding in findings
+	finding.policy_id == "javascript/pnpm-npmrc-required"
+	finding._loc.file == "apps/web/.npmrc"
+}
+
+test_pnpm_npmrc_engine_strict_checks_the_own_npmrc if {
+	project := object.union(sub_package, {"npmrc": {"engine-strict": "false"}})
+	findings := policies.deny with input as {"projects": [pnpm_project, project]}
+	some finding in findings
+	finding.policy_id == "javascript/pnpm-npmrc-engine-strict"
+	finding._loc.file == "apps/web/.npmrc"
+}
+
+# engines.pnpm in the workspace package already stops older pnpm versions from installing.
+test_minimum_pnpm_version_checks_only_the_workspace_package if {
+	findings := policies.deny with input as {"projects": [pnpm_project, sub_package]}
+	files := {finding._loc.file | some finding in findings; finding.policy_id == "javascript/minimum-pnpm-version"}
+	files == {"package.json"}
+}
+
+dev_engines_flagged(package_manager) if {
+	project := object.union(pnpm_project, {"package": {"devEngines": {"packageManager": package_manager}}})
+	findings := policies.deny with input as {"projects": [project]}
+	"javascript/pnpm-dev-engines-on-fail" in finding_ids(findings)
+}
+
+test_dev_engines_on_fail_allows_safe_values if {
+	not dev_engines_flagged({"name": "pnpm", "version": "11.2.3"})
+	not dev_engines_flagged({"name": "pnpm", "version": "11.2.3", "onFail": "error"})
+	not dev_engines_flagged({"name": "pnpm", "version": "11.2.3", "onFail": "download"})
+	not dev_engines_flagged([{"name": "pnpm", "version": "11.2.3", "onFail": "error"}])
+}
+
+test_dev_engines_on_fail_rejects_unsafe_values if {
+	dev_engines_flagged({"name": "pnpm", "version": "11.2.3", "onFail": "ignore"})
+	dev_engines_flagged({"name": "pnpm", "version": "11.2.3", "onFail": "warn"})
+	dev_engines_flagged({"name": "pnpm", "version": "^11.0.0", "onFail": "download"})
+	dev_engines_flagged([{"name": "pnpm", "version": "11.2.3", "onFail": "ignore"}])
+}
+
+ci_command(command) := {"path": "Dockerfile", "projectRoot": ".", "command": command, "env": {"CI": "true"}}
+
+npm_project := object.union(pnpm_project, {"manager": "npm", "lockfilePath": "package-lock.json"})
+
+# One finding per problem: each pair below used to produce two findings.
+test_inline_npm_install_is_reported_once if {
+	ids := finding_ids(policies.deny) with input as {
+		"projects": [npm_project],
+		"ciCommands": [ci_command("npm install eslint")],
+	}
+	"javascript/inline-package-install" in ids
+	not "javascript/npm-ci-required" in ids
+}
+
+test_npx_in_pnpm_project_is_reported_once if {
+	ids := finding_ids(policies.deny) with input as {
+		"projects": [pnpm_project],
+		"ciCommands": [ci_command("npx prettier --check .")],
+	}
+	"javascript/inline-package-install" in ids
+	not "javascript/npm-command-in-pnpm-ci" in ids
+}
+
+test_npm_install_in_pnpm_project_is_reported_once if {
+	ids := finding_ids(policies.deny) with input as {
+		"projects": [pnpm_project],
+		"ciCommands": [ci_command("npm install")],
+	}
+	"javascript/npm-command-in-pnpm-ci" in ids
+	not "javascript/npm-ci-required" in ids
+}
+
+test_npm_install_in_npm_project_is_still_reported if {
+	ids := finding_ids(policies.deny) with input as {
+		"projects": [npm_project],
+		"ciCommands": [ci_command("npm install")],
+	}
+	"javascript/npm-ci-required" in ids
+}
+
+test_npx_script_in_pnpm_project_is_reported_once if {
+	project := object.union(pnpm_project, {"package": {"scripts": {"lint": "npx eslint ."}}})
+	ids := finding_ids(policies.deny) with input as {"projects": [project]}
+	"javascript/inline-package-install-script" in ids
+	not "javascript/npm-command-in-pnpm-script" in ids
+}
+
+test_unsupported_manager_is_reported_without_lockfile_finding if {
+	project := object.union(pnpm_project, {"manager": "yarn", "lockfilePath": ""})
+	ids := finding_ids(policies.deny) with input as {"projects": [project]}
+	"javascript/supported-package-manager" in ids
+	not "javascript/lockfile-required" in ids
+}
+
+test_pnpm_package_manager_field_is_rejected if {
+	project := object.union(pnpm_project, {"package": {"packageManager": "pnpm@11.2.3"}})
+	ids := finding_ids(policies.deny) with input as {"projects": [project]}
+	"javascript/pnpm-package-manager-field" in ids
+}
+
+test_pnpm_dev_engines_pin_without_package_manager_is_accepted if {
+	ids := finding_ids(policies.deny) with input as {"projects": [object.union(pnpm_project, {"package": dev_engines_pnpm})]}
+	not "javascript/pnpm-package-manager-field" in ids
+}
