@@ -20,7 +20,7 @@ deny contains finding if {
 
 	finding := policy_finding(
 		concat(" ", [
-			sprintf("%s has no packageManager field or lockfile, so its package manager is unknown.", [project.packagePath]),
+			sprintf("%s has no lockfile, so its package manager is unknown.", [project.packagePath]),
 			"Use pnpm (recommended) or npm and commit its lockfile.",
 		]),
 		project.packagePath,
@@ -366,6 +366,27 @@ pm_on_fail_allowed(_, "error")
 
 pm_on_fail_allowed(project, "download") if {
 	dev_engines_pinned_at_least(workspace_package(project), "pnpm", "11.0.0")
+}
+
+# Rejects packageManager in pnpm projects; devEngines.packageManager pins pnpm instead.
+# pnpm records the devEngines release's integrity in pnpm-lock.yaml and refuses
+# to run a release that does not match it, but ignores a packageManager hash.
+# When both are set, tools disagree about which one wins.
+deny contains finding if {
+	some project in input.projects
+	project.manager == "pnpm"
+	"packageManager" in object.keys(project.package)
+
+	finding := policy_finding(
+		concat(" ", [
+			sprintf("%s must not set packageManager.", [project.packagePath]),
+			"Pin pnpm with devEngines.packageManager instead",
+			"(e.g. {\"name\": \"pnpm\", \"version\": \"11.0.0\"}) in the workspace package.json:",
+			"pnpm records that release's integrity in pnpm-lock.yaml and refuses a release that does not match it.",
+		]),
+		project.packagePath,
+		"javascript/pnpm-package-manager-field",
+	)
 }
 
 # Rejects devEngines.packageManager onFail values that let pnpm continue with another

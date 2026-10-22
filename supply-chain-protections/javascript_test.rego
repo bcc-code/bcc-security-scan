@@ -227,3 +227,14 @@ test_unsupported_manager_is_reported_without_lockfile_finding if {
 	"javascript/supported-package-manager" in ids
 	not "javascript/lockfile-required" in ids
 }
+
+test_pnpm_package_manager_field_is_rejected if {
+	project := object.union(pnpm_project, {"package": {"packageManager": "pnpm@11.2.3"}})
+	ids := finding_ids(policies.deny) with input as {"projects": [project]}
+	"javascript/pnpm-package-manager-field" in ids
+}
+
+test_pnpm_dev_engines_pin_without_package_manager_is_accepted if {
+	ids := finding_ids(policies.deny) with input as {"projects": [object.union(pnpm_project, {"package": dev_engines_pnpm})]}
+	not "javascript/pnpm-package-manager-field" in ids
+}
