@@ -71,3 +71,28 @@ test_engine_at_least_rejects_unsafe_ranges if {
         not policies.engine_at_least(constraint, "11.10.0")
     }
 }
+
+test_package_manager_pinned_at_least_accepts_pinned_versions if {
+    every value in {
+        "pnpm@11.0.0",
+        "pnpm@11.2.3",
+        "pnpm@12.0.0+sha512.0123456789abcdef",
+    } {
+        policies.package_manager_pinned_at_least({"packageManager": value}, "pnpm", "11.0.0")
+    }
+}
+
+test_package_manager_pinned_at_least_rejects_unproven_versions if {
+    every package_document in [
+        {},
+        {"packageManager": "pnpm@10.30.0"},
+        {"packageManager": "pnpm@11.0.0-rc.1"},
+        {"packageManager": "pnpm@^11.0.0"},
+        {"packageManager": "pnpm@11"},
+        {"packageManager": "npm@11.10.0"},
+        {"packageManager": "pnpm@11.0.0 "},
+        {"packageManager": 11},
+    ] {
+        not policies.package_manager_pinned_at_least(package_document, "pnpm", "11.0.0")
+    }
+}

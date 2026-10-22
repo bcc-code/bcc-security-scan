@@ -149,6 +149,20 @@ wildcard_to_zero(part) := part if {
     not part in {"x", "X", "*"}
 }
 
+# packageManager must pin an exact version (optionally with an integrity hash),
+# which Corepack and pnpm use to run that exact release.
+package_manager_pinned_at_least(package_document, manager, minimum) if {
+    value := object.get(package_document, "packageManager", "")
+    is_string(value)
+    match := regex.find_all_string_submatch_n(
+        `^([a-z]+)@([0-9]+\.[0-9]+\.[0-9]+)(?:\+sha[0-9]+\.[0-9a-f]+)?$`,
+        value,
+        1,
+    )[0]
+    match[1] == manager
+    semver.compare(match[2], minimum) >= 0
+}
+
 true_value(value) if {
     value == true
 }

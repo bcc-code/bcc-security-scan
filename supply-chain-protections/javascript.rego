@@ -30,42 +30,6 @@ pnpm_requirement_reason := {
     "strictDepBuilds": "This fails when a dependency lifecycle script has not been reviewed.",
 }
 
-# Recommends setting packageManagerStrictVersion to true for pnpm to prevent old versions from being used.
-# Note that new versions have deprecated this setting, but old versions don't understand the new setting.
-warn contains finding if {
-    some project in input.projects
-    project.manager == "pnpm"
-    project.workspacePath != ""
-    not true_value(object.get(project.workspace, "packageManagerStrictVersion", false))
-
-    finding := policy_finding(
-        concat(" ", [
-            sprintf("%s should set packageManagerStrictVersion: true.", [project.workspacePath]),
-            "This prevents older pnpm versions from ignoring unsupported supply-chain settings.",
-        ]),
-        project.workspacePath,
-        "javascript/pnpm-workspace-packageManagerStrictVersion",
-    )
-}
-
-# Recommends preventing pnpm from accepting packages whose trust level has decreased.
-warn contains finding if {
-    some project in input.projects
-    project.manager == "pnpm"
-    project.workspacePath != ""
-    object.get(project.workspace, "trustPolicy", "") != "no-downgrade"
-
-    finding := policy_finding(
-        concat(" ", [
-            sprintf("%s should set trustPolicy: no-downgrade.", [project.workspacePath]),
-            "This prevents installing a package version when its trust level",
-            "is lower than previously published versions.",
-        ]),
-        project.workspacePath,
-        "javascript/pnpm-workspace-trust-policy",
-    )
-}
-
 # Recommends pnpm over npm because pnpm provides stronger supply-chain controls.
 warn contains finding if {
     some project in input.projects
@@ -484,5 +448,47 @@ deny contains finding if {
         ]),
         project.workspacePath,
         "javascript/pnpm-workspace-dangerous-builds",
+    )
+}
+
+# Requires pnpm to fail when the running pnpm version does not match packageManager,
+# so older pnpm versions cannot silently ignore unsupported supply-chain settings.
+# Newer pnpm versions have deprecated this setting, but older versions don't understand
+# its replacement, so it is only exempt when packageManager pins pnpm 11.0.0 or newer.
+deny contains finding if {
+    some project in input.projects
+    project.manager == "pnpm"
+    project.workspacePath != ""
+    not true_value(object.get(project.workspace, "packageManagerStrictVersion", false))
+    not package_manager_pinned_at_least(project.package, "pnpm", "11.0.0")
+
+    finding := policy_finding(
+        concat(" ", [
+            sprintf("%s must set packageManagerStrictVersion: true,", [project.workspacePath]),
+            sprintf("unless %s pins packageManager to pnpm 11.0.0 or newer (e.g. pnpm@11.0.0).", [project.packagePath]),
+            "This prevents older pnpm versions from ignoring unsupported supply-chain settings.",
+        ]),
+        project.workspacePath,
+        "javascript/pnpm-workspace-packageManagerStrictVersion",
+    )
+}
+
+# Prevents pnpm from installing packages whose trust level has decreased.
+deny contains finding if {
+    some project in input.projects
+    project.manager == "pnpm"
+    project.workspacePath != ""
+    object.get(project.workspace, "trustPolicy", "") != "no-downgrade"
+
+    finding := policy_finding(
+        concat(" ", [
+            sprintf("%s must set trustPolicy: no-downgrade.", [project.workspacePath]),
+            "This prevents installing a package version when its trust level",
+            "is lower than previously published versions.",
+            "For exceptions, use trustPolicyExclude for specific packages",
+            "or trustPolicyIgnoreAfter for versions older than a given age.",
+        ]),
+        project.workspacePath,
+        "javascript/pnpm-workspace-trust-policy",
     )
 }
