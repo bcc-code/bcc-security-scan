@@ -96,3 +96,18 @@ test_package_manager_pinned_at_least_rejects_unproven_versions if {
         not policies.package_manager_pinned_at_least(package_document, "pnpm", "11.0.0")
     }
 }
+
+test_pnpm_version_proven_requires_package_manager_and_engines if {
+    policies.pnpm_version_proven(
+        {"packageManager": "pnpm@11.2.3", "engines": {"pnpm": ">=11.0.0"}},
+        "11.0.0",
+    )
+    every package_document in [
+        {"packageManager": "pnpm@11.2.3"},
+        {"engines": {"pnpm": ">=11.0.0"}},
+        {"packageManager": "pnpm@11.2.3", "engines": {"pnpm": ">=10.0.0"}},
+        {"packageManager": "pnpm@10.30.0", "engines": {"pnpm": ">=11.0.0"}},
+    ] {
+        not policies.pnpm_version_proven(package_document, "11.0.0")
+    }
+}

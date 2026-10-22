@@ -163,6 +163,14 @@ package_manager_pinned_at_least(package_document, manager, minimum) if {
     semver.compare(match[2], minimum) >= 0
 }
 
+# Older pnpm versions ignore the packageManager version but refuse to run
+# when engines.pnpm excludes them, so both are needed to prove the version.
+pnpm_version_proven(package_document, minimum) if {
+    package_manager_pinned_at_least(package_document, "pnpm", minimum)
+    engines := object.get(package_document, "engines", {})
+    engine_at_least(object.get(engines, "pnpm", ""), minimum)
+}
+
 true_value(value) if {
     value == true
 }

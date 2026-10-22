@@ -453,19 +453,21 @@ deny contains finding if {
 
 # Requires pnpm to fail when the running pnpm version does not match packageManager,
 # so older pnpm versions cannot silently ignore unsupported supply-chain settings.
-# Newer pnpm versions have deprecated this setting, but older versions don't understand
-# its replacement, so it is only exempt when packageManager pins pnpm 11.0.0 or newer.
+# Newer pnpm versions have deprecated this setting, so it is exempt when pnpm 11.0.0
+# or newer is proven: engines.pnpm makes pnpm 5-10 refuse to install or run scripts,
+# and the pinned packageManager makes pnpm 10 switch to that exact version.
 deny contains finding if {
     some project in input.projects
     project.manager == "pnpm"
     project.workspacePath != ""
     not true_value(object.get(project.workspace, "packageManagerStrictVersion", false))
-    not package_manager_pinned_at_least(project.package, "pnpm", "11.0.0")
+    not pnpm_version_proven(project.package, "11.0.0")
 
     finding := policy_finding(
         concat(" ", [
             sprintf("%s must set packageManagerStrictVersion: true,", [project.workspacePath]),
-            sprintf("unless %s pins packageManager to pnpm 11.0.0 or newer (e.g. pnpm@11.0.0).", [project.packagePath]),
+            sprintf("unless %s pins packageManager to pnpm 11.0.0 or newer (e.g. pnpm@11.0.0)", [project.packagePath]),
+            "and sets engines.pnpm to exclude versions older than 11.0.0.",
             "This prevents older pnpm versions from ignoring unsupported supply-chain settings.",
         ]),
         project.workspacePath,
