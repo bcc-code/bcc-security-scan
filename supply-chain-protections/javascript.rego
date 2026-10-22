@@ -58,8 +58,10 @@ warn contains finding if {
 }
 
 # Requires a committed lockfile, so installs use reviewed, reproducible versions.
+# Unknown and unsupported package managers are reported by supported-package-manager instead.
 deny contains finding if {
 	some project in input.projects
+	project.manager in {"npm", "pnpm"}
 	project.lockfilePath == ""
 
 	finding := policy_finding(
@@ -227,9 +229,12 @@ deny contains finding if {
 }
 
 # Requires pnpm 11.0.0 or newer, the first version with every setting checked below.
+# Only the workspace package needs it: there it stops older pnpm versions from installing
+# anywhere in the workspace, and running scripts without installing reads no supply-chain settings.
 deny contains finding if {
 	some project in input.projects
 	project.manager == "pnpm"
+	is_workspace_root(project)
 	engines := object.get(project.package, "engines", {})
 	not engine_at_least(object.get(engines, "pnpm", ""), "11.0.0")
 
@@ -243,20 +248,23 @@ deny contains finding if {
 	)
 }
 
-# Requires an .npmrc in pnpm projects, so npm reads engine-strict=true from it.
+# Requires an .npmrc next to every package.json in pnpm projects, so npm reads
+# engine-strict=true from it. npm only reads the .npmrc in the folder of the package
+# it runs in, so a workspace's root .npmrc does not apply inside its sub-packages.
 # pnpm 11 ignores this file except for auth and registry settings.
 deny contains finding if {
 	some project in input.projects
 	project.manager == "pnpm"
-	project.npmrcPath == ""
+	npmrc := path_for(project.root, ".npmrc")
+	project.npmrcPath != npmrc
 
 	finding := policy_finding(
 		concat(" ", [
-			sprintf("%s has no applicable .npmrc.", [project.packagePath]),
-			"Add and commit an .npmrc containing engine-strict=true,",
-			"so npm refuses to install because of engines.npm=disallow.",
+			sprintf("%s must exist and set engine-strict=true,", [npmrc]),
+			sprintf("so npm refuses to install in %s because of engines.npm=disallow.", [project.root]),
+			"npm does not read .npmrc files from parent folders.",
 		]),
-		project.packagePath,
+		npmrc,
 		"javascript/pnpm-npmrc-required",
 	)
 }
@@ -266,7 +274,7 @@ deny contains finding if {
 deny contains finding if {
 	some project in input.projects
 	project.manager == "pnpm"
-	project.npmrcPath != ""
+	project.npmrcPath == path_for(project.root, ".npmrc")
 	not is_true(object.get(project.npmrc, "engine-strict", false))
 
 	finding := policy_finding(
@@ -360,28 +368,35 @@ pm_on_fail_allowed(project, "download") if {
 	dev_engines_pinned_at_least(workspace_package(project), "pnpm", "11.0.0")
 }
 
-# Requires pnpm to fail when the running pnpm version does not match packageManager,
-# so older pnpm versions cannot silently ignore unsupported supply-chain settings.
-# Newer pnpm versions have deprecated this setting, so it is exempt when pnpm 11.0.0
-# or newer is proven: engines.pnpm makes pnpm 5-10 refuse to install,
-# and the pinned packageManager makes pnpm 10 switch to that exact version.
+# Rejects devEngines.packageManager onFail values that let pnpm continue with another
+# pnpm version, because an explicit onFail can take precedence over pmOnFail.
+# pnpm only reads devEngines from the workspace package.
 deny contains finding if {
 	some project in input.projects
 	project.manager == "pnpm"
-	project.workspacePath != ""
-	not is_true(object.get(project.workspace, "packageManagerStrictVersion", false))
-	not pnpm_version_proven(workspace_package(project), "11.0.0")
+	is_workspace_root(project)
+	some entry in dev_engines_package_managers(project.package)
+	object.get(entry, "name", "") == "pnpm"
+	on_fail := object.get(entry, "onFail", "")
+	not dev_engines_on_fail_allowed(entry, on_fail)
 
 	finding := policy_finding(
 		concat(" ", [
-			sprintf("%s must set packageManagerStrictVersion: true,", [project.workspacePath]),
-			sprintf("unless %s pins packageManager to pnpm 11.0.0 or newer (e.g. pnpm@11.0.0)", [workspace_package_path(project)]),
-			"and sets engines.pnpm to exclude versions older than 11.0.0.",
-			"This prevents older pnpm versions from ignoring unsupported supply-chain settings.",
+			sprintf("%s must not set devEngines.packageManager onFail: %v.", [project.packagePath, on_fail]),
+			"Leave it out, or use error, or download with an exact pnpm version of 11.0.0 or newer,",
+			"so pnpm never continues with a version other than the pinned one.",
 		]),
-		project.workspacePath,
-		"javascript/pnpm-workspace-packageManagerStrictVersion",
+		project.packagePath,
+		"javascript/pnpm-dev-engines-on-fail",
 	)
+}
+
+dev_engines_on_fail_allowed(_, "")
+
+dev_engines_on_fail_allowed(_, "error")
+
+dev_engines_on_fail_allowed(entry, "download") if {
+	is_exact_pin(entry, "pnpm", "11.0.0")
 }
 
 # Requires trustPolicy: no-downgrade, so a release published with weaker provenance
@@ -446,11 +461,14 @@ deny contains finding if {
 }
 
 # Rejects npm and npx in pnpm projects' scripts, because npm ignores the pnpm settings.
+# Scripts that run a package inline are left to inline-package-install-script,
+# whose fix also removes npx.
 deny contains finding if {
 	some project in input.projects
 	project.manager == "pnpm"
 	some script in object.get(project.package, "scripts", {})
 	runs_npm(script)
+	not runs_inline_package(script) # Reported by inline-package-install-script.
 
 	finding := policy_finding(
 		concat(" ", [
@@ -500,9 +518,13 @@ deny contains finding if {
 }
 
 # Requires npm ci, because npm install may update the lockfile instead of following it.
+# Commands already reported by inline-package-install or npm-command-in-pnpm-ci are
+# skipped: fixing those findings removes the npm install too.
 deny contains finding if {
 	some command in input.ciCommands
 	runs_npm_install(command.command)
+	not runs_inline_package(command.command)
+	not in_pnpm_project(command)
 
 	finding := policy_finding(
 		concat(" ", [
@@ -515,11 +537,12 @@ deny contains finding if {
 }
 
 # Rejects npm and npx in pnpm projects, because npm ignores the pnpm lockfile and settings.
+# Commands that run a package inline are left to inline-package-install, whose fix also removes npx.
 deny contains finding if {
 	some command in input.ciCommands
-	project := project_for(command.projectRoot)
-	project.manager == "pnpm"
+	in_pnpm_project(command)
 	runs_npm(command.command)
+	not runs_inline_package(command.command)
 
 	finding := policy_finding(
 		concat(" ", [
