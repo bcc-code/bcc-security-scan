@@ -152,3 +152,19 @@ test_action_references_finds_nested_uses if {
         "org/repo/.github/workflows/deploy.yml@main",
     }
 }
+
+test_package_manager_hash_pinned_at_least_requires_sha512_hash if {
+    policies.package_manager_hash_pinned_at_least(
+        {"packageManager": "pnpm@11.2.3+sha512.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        "pnpm",
+        "11.0.0",
+    )
+    every package_document in [
+        {"packageManager": "pnpm@11.2.3"},
+        {"packageManager": "pnpm@11.2.3+sha512.abc123"},
+        {"packageManager": "pnpm@11.2.3+sha256.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        {"packageManager": "pnpm@10.30.0+sha512.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    ] {
+        not policies.package_manager_hash_pinned_at_least(package_document, "pnpm", "11.0.0")
+    }
+}

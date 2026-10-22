@@ -243,6 +243,42 @@ deny contains finding if {
     )
 }
 
+# Requires an .npmrc in pnpm projects, so npm reads engine-strict=true from it.
+# pnpm 11 ignores this file except for auth and registry settings.
+deny contains finding if {
+    some project in input.projects
+    project.manager == "pnpm"
+    project.npmrcPath == ""
+
+    finding := policy_finding(
+        concat(" ", [
+            sprintf("%s has no applicable .npmrc.", [project.packagePath]),
+            "Add and commit an .npmrc containing engine-strict=true,",
+            "so npm refuses to install because of engines.npm=disallow.",
+        ]),
+        project.packagePath,
+        "javascript/pnpm-npmrc-required",
+    )
+}
+
+# Requires engine-strict=true in pnpm projects' .npmrc, because without it
+# npm install and npm ci only warn about engines.npm=disallow and install anyway.
+deny contains finding if {
+    some project in input.projects
+    project.manager == "pnpm"
+    project.npmrcPath != ""
+    not is_true(object.get(project.npmrc, "engine-strict", false))
+
+    finding := policy_finding(
+        concat(" ", [
+            sprintf("%s must set engine-strict=true.", [project.npmrcPath]),
+            "Without it, npm only warns about engines.npm=disallow and installs anyway.",
+        ]),
+        project.npmrcPath,
+        "javascript/pnpm-npmrc-engine-strict",
+    )
+}
+
 # Requires a pnpm-workspace.yaml, where pnpm reads its supply-chain settings.
 deny contains finding if {
     some project in input.projects
@@ -296,22 +332,32 @@ deny contains finding if {
     )
 }
 
-# Requires pnpm to stop when the configured package-manager version cannot be used,
-# instead of continuing with a version that may ignore these settings.
+# Requires pnpm to never continue with a pnpm version other than the pinned one,
+# because that version may ignore these settings.
+# pmOnFail: error stops pnpm. pmOnFail: download switches to the pinned version,
+# so it is allowed only when packageManager pins an allowed version with a hash.
 deny contains finding if {
     some project in input.projects
     project.manager == "pnpm"
     project.workspacePath != ""
-    object.get(project.workspace, "pmOnFail", "") != "error"
+    not pm_on_fail_allowed(project, object.get(project.workspace, "pmOnFail", ""))
 
     finding := policy_finding(
         concat(" ", [
-            sprintf("%s must set pmOnFail: error.", [project.workspacePath]),
-            "This stops pnpm when the configured package-manager version cannot be used.",
+            sprintf("%s must set pmOnFail: error,", [project.workspacePath]),
+            sprintf("or pmOnFail: download when %s pins packageManager", [project.packagePath]),
+            "to pnpm 11.0.0 or newer with a SHA-512 hash (e.g. pnpm@11.0.0+sha512.<hash>, written by `corepack use`).",
+            "This stops pnpm from continuing with a version other than the pinned one.",
         ]),
         project.workspacePath,
         "javascript/pnpm-workspace-pm-on-fail",
     )
+}
+
+pm_on_fail_allowed(_, "error")
+
+pm_on_fail_allowed(project, "download") if {
+    package_manager_hash_pinned_at_least(project.package, "pnpm", "11.0.0")
 }
 
 # Requires pnpm to fail when the running pnpm version does not match packageManager,

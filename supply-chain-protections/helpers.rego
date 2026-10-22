@@ -142,18 +142,30 @@ wildcard_to_zero(part) := part if {
     not part in {"x", "X", "*"}
 }
 
-# packageManager must pin an exact version (optionally with an integrity hash),
-# which Corepack and pnpm use to run that exact release.
-package_manager_pinned_at_least(package_document, manager, minimum) if {
+# Splits an exact packageManager pin (`name@x.y.z`, optionally `+sha512.<hex>`)
+# into its name, version, and hash. Ranges and partial versions do not match.
+package_manager_pin(package_document) := {"name": match[1], "version": match[2], "hash": match[3]} if {
     value := object.get(package_document, "packageManager", "")
     is_string(value)
     match := regex.find_all_string_submatch_n(
-        `^([a-z]+)@([0-9]+\.[0-9]+\.[0-9]+)(?:\+sha[0-9]+\.[0-9a-f]+)?$`,
+        `^([a-z]+)@([0-9]+\.[0-9]+\.[0-9]+)(?:\+(sha[0-9]+\.[0-9a-f]+))?$`,
         value,
         1,
     )[0]
-    match[1] == manager
-    semver.compare(match[2], minimum) >= 0
+}
+
+# packageManager must pin an exact version, which Corepack and pnpm use to run that exact release.
+package_manager_pinned_at_least(package_document, manager, minimum) if {
+    pin := package_manager_pin(package_document)
+    pin.name == manager
+    semver.compare(pin.version, minimum) >= 0
+}
+
+# Also requires a SHA-512 hash of the release, as written by `corepack use`,
+# which Corepack checks before running the release.
+package_manager_hash_pinned_at_least(package_document, manager, minimum) if {
+    package_manager_pinned_at_least(package_document, manager, minimum)
+    regex.match(`^sha512\.[0-9a-f]{128}$`, package_manager_pin(package_document).hash)
 }
 
 # Older pnpm versions ignore the packageManager version but refuse to run
