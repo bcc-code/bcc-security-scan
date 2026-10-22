@@ -243,6 +243,42 @@ deny contains finding if {
     )
 }
 
+# Requires an .npmrc in pnpm projects, so npm reads engine-strict=true from it.
+# pnpm 11 ignores this file except for auth and registry settings.
+deny contains finding if {
+    some project in input.projects
+    project.manager == "pnpm"
+    project.npmrcPath == ""
+
+    finding := policy_finding(
+        concat(" ", [
+            sprintf("%s has no applicable .npmrc.", [project.packagePath]),
+            "Add and commit an .npmrc containing engine-strict=true,",
+            "so npm refuses to install because of engines.npm=disallow.",
+        ]),
+        project.packagePath,
+        "javascript/pnpm-npmrc-required",
+    )
+}
+
+# Requires engine-strict=true in pnpm projects' .npmrc, because without it
+# npm install and npm ci only warn about engines.npm=disallow and install anyway.
+deny contains finding if {
+    some project in input.projects
+    project.manager == "pnpm"
+    project.npmrcPath != ""
+    not is_true(object.get(project.npmrc, "engine-strict", false))
+
+    finding := policy_finding(
+        concat(" ", [
+            sprintf("%s must set engine-strict=true.", [project.npmrcPath]),
+            "Without it, npm only warns about engines.npm=disallow and installs anyway.",
+        ]),
+        project.npmrcPath,
+        "javascript/pnpm-npmrc-engine-strict",
+    )
+}
+
 # Requires a pnpm-workspace.yaml, where pnpm reads its supply-chain settings.
 deny contains finding if {
     some project in input.projects
@@ -296,40 +332,50 @@ deny contains finding if {
     )
 }
 
-# Requires pnpm to stop when the configured package-manager version cannot be used,
-# instead of continuing with a version that may ignore these settings.
+# Requires pnpm to never continue with a pnpm version other than the pinned one,
+# because that version may ignore these settings.
+# pmOnFail: error stops pnpm. pmOnFail: download switches to the pinned version,
+# so it is allowed only when devEngines.packageManager pins an exact, allowed version.
 deny contains finding if {
     some project in input.projects
     project.manager == "pnpm"
     project.workspacePath != ""
-    object.get(project.workspace, "pmOnFail", "") != "error"
+    not pm_on_fail_allowed(project, object.get(project.workspace, "pmOnFail", ""))
 
     finding := policy_finding(
         concat(" ", [
-            sprintf("%s must set pmOnFail: error.", [project.workspacePath]),
-            "This stops pnpm when the configured package-manager version cannot be used.",
+            sprintf("%s must set pmOnFail: error,", [project.workspacePath]),
+            sprintf("or pmOnFail: download when %s sets devEngines.packageManager", [workspace_package_path(project)]),
+            "to an exact pnpm version of 11.0.0 or newer (e.g. {\"name\": \"pnpm\", \"version\": \"11.0.0\"}).",
+            "This stops pnpm from continuing with a version other than the pinned one.",
         ]),
         project.workspacePath,
         "javascript/pnpm-workspace-pm-on-fail",
     )
 }
 
+pm_on_fail_allowed(_, "error")
+
+pm_on_fail_allowed(project, "download") if {
+    dev_engines_pinned_at_least(workspace_package(project), "pnpm", "11.0.0")
+}
+
 # Requires pnpm to fail when the running pnpm version does not match packageManager,
 # so older pnpm versions cannot silently ignore unsupported supply-chain settings.
 # Newer pnpm versions have deprecated this setting, so it is exempt when pnpm 11.0.0
-# or newer is proven: engines.pnpm makes pnpm 5-10 refuse to install or run scripts,
+# or newer is proven: engines.pnpm makes pnpm 5-10 refuse to install,
 # and the pinned packageManager makes pnpm 10 switch to that exact version.
 deny contains finding if {
     some project in input.projects
     project.manager == "pnpm"
     project.workspacePath != ""
     not is_true(object.get(project.workspace, "packageManagerStrictVersion", false))
-    not pnpm_version_proven(project.package, "11.0.0")
+    not pnpm_version_proven(workspace_package(project), "11.0.0")
 
     finding := policy_finding(
         concat(" ", [
             sprintf("%s must set packageManagerStrictVersion: true,", [project.workspacePath]),
-            sprintf("unless %s pins packageManager to pnpm 11.0.0 or newer (e.g. pnpm@11.0.0)", [project.packagePath]),
+            sprintf("unless %s pins packageManager to pnpm 11.0.0 or newer (e.g. pnpm@11.0.0)", [workspace_package_path(project)]),
             "and sets engines.pnpm to exclude versions older than 11.0.0.",
             "This prevents older pnpm versions from ignoring unsupported supply-chain settings.",
         ]),
@@ -486,10 +532,12 @@ deny contains finding if {
     )
 }
 
-# Requires CI=true for pnpm commands, because pnpm then refuses to change
-# the lockfile during install.
+# Requires CI=true for pnpm commands in container builds, because pnpm then refuses
+# to change the lockfile during install. GitHub workflows and actions are skipped:
+# GitHub sets CI=true on every runner, but the inventory only sees variables set in YAML.
 deny contains finding if {
     some command in input.ciCommands
+    not command.path in github_document_paths
     runs_pnpm(command.command)
     project := project_for(command.projectRoot)
     project.manager == "pnpm"
@@ -498,7 +546,7 @@ deny contains finding if {
     finding := policy_finding(
         concat(" ", [
             sprintf("%s runs pnpm without CI=true.", [command.path]),
-            "Set CI=true before running pnpm in CI and container builds",
+            "Set CI=true before running pnpm in container builds",
             "so installs fail instead of changing the lockfile.",
         ]),
         command.path,

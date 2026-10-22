@@ -38,9 +38,31 @@ path_for(root, name) := sprintf("%s/%s", [trim(root, "/"), name]) if {
     root != "."
 }
 
+directory_of(path) := "." if {
+    not contains(path, "/")
+}
+
+directory_of(path) := regex.replace(path, `/[^/]+$`, "") if {
+    contains(path, "/")
+}
+
+# pnpm reads packageManager and devEngines.packageManager only from the
+# package.json next to pnpm-workspace.yaml, not from workspace sub-packages.
+workspace_package_path(project) := path_for(directory_of(project.workspacePath), "package.json")
+
+workspace_package(project) := root.package if {
+    root := project_for(directory_of(project.workspacePath))
+}
+
+workspace_package(project) := {} if {
+    not project_for(directory_of(project.workspacePath))
+}
+
 # ---------------------------------------------------------------------------
 # GitHub Actions references
 # ---------------------------------------------------------------------------
+
+github_document_paths := {document.path | some document in input.githubDocuments}
 
 # Every `uses:` value in a workflow or action document,
 # covering steps, reusable workflow jobs, and composite actions.
@@ -142,18 +164,37 @@ wildcard_to_zero(part) := part if {
     not part in {"x", "X", "*"}
 }
 
-# packageManager must pin an exact version (optionally with an integrity hash),
-# which Corepack and pnpm use to run that exact release.
-package_manager_pinned_at_least(package_document, manager, minimum) if {
+# Splits an exact packageManager pin (`name@x.y.z`, optionally `+sha512.<hex>`)
+# into its name, version, and hash. Ranges and partial versions do not match.
+package_manager_pin(package_document) := {"name": match[1], "version": match[2], "hash": match[3]} if {
     value := object.get(package_document, "packageManager", "")
     is_string(value)
     match := regex.find_all_string_submatch_n(
-        `^([a-z]+)@([0-9]+\.[0-9]+\.[0-9]+)(?:\+sha[0-9]+\.[0-9a-f]+)?$`,
+        `^([a-z]+)@([0-9]+\.[0-9]+\.[0-9]+)(?:\+(sha[0-9]+\.[0-9a-f]+))?$`,
         value,
         1,
     )[0]
-    match[1] == manager
-    semver.compare(match[2], minimum) >= 0
+}
+
+# packageManager must pin an exact version, which Corepack and pnpm use to run that exact release.
+package_manager_pinned_at_least(package_document, manager, minimum) if {
+    pin := package_manager_pin(package_document)
+    pin.name == manager
+    semver.compare(pin.version, minimum) >= 0
+}
+
+# devEngines.packageManager must name an exact version. pnpm records that release's
+# integrity in pnpm-lock.yaml and refuses to run a release that does not match it.
+# A range would switch to whichever matching release is newest.
+dev_engines_pinned_at_least(package_document, manager, minimum) if {
+    dev_engines := object.get(package_document, "devEngines", {})
+    package_manager := object.get(dev_engines, "packageManager", {})
+    is_object(package_manager)
+    object.get(package_manager, "name", "") == manager
+    version := object.get(package_manager, "version", "")
+    is_string(version)
+    regex.match(`^[0-9]+\.[0-9]+\.[0-9]+$`, version)
+    semver.compare(version, minimum) >= 0
 }
 
 # Older pnpm versions ignore the packageManager version but refuse to run
