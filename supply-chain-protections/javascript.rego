@@ -509,7 +509,7 @@ deny contains finding if {
 # Rejects Yarn, Bun, and Deno commands, because those package managers are not supported.
 deny contains finding if {
 	some command in input.ciCommands
-	runs_unsupported_manager(command.command)
+	runs_unsupported_manager(checked_command(command))
 
 	finding := policy_finding(
 		concat(" ", [
@@ -522,17 +522,24 @@ deny contains finding if {
 }
 
 # Rejects commands that download and run packages, because those bypass the lockfile.
+# Container builds may still install pnpm itself; see checked_command.
 deny contains finding if {
 	some command in input.ciCommands
-	runs_inline_package(command.command)
+	runs_inline_package(checked_command(command))
 
 	finding := policy_finding(
-		concat(" ", [
-			sprintf("%s installs or executes a package inline.", [command.path]),
-			"Inline packages bypass the lockfile and the release-age and trust checks.",
-			"Add the tool as a project dependency and invoke its binary",
-			"through a package script instead.",
-		]),
+		concat(" ", array.concat(
+			[
+				sprintf("%s installs or executes a package inline.", [command.path]),
+				"Inline packages bypass the lockfile and the release-age and trust checks.",
+				"Add the tool as a project dependency and invoke its binary",
+				"through a package script instead.",
+			],
+			[hint | command.path in container_build_paths; hint := concat(" ", [
+				"To install pnpm itself in a container build,",
+				"use npm install -g pnpm@<exact version of 11.0.0 or newer>.",
+			])],
+		)),
 		command.path,
 		"javascript/inline-package-install",
 	)
@@ -543,8 +550,8 @@ deny contains finding if {
 # skipped: fixing those findings removes the npm install too.
 deny contains finding if {
 	some command in input.ciCommands
-	runs_npm_install(command.command)
-	not runs_inline_package(command.command)
+	runs_npm_install(checked_command(command))
+	not runs_inline_package(checked_command(command))
 	not in_pnpm_project(command)
 
 	finding := policy_finding(
@@ -562,8 +569,8 @@ deny contains finding if {
 deny contains finding if {
 	some command in input.ciCommands
 	in_pnpm_project(command)
-	runs_npm(command.command)
-	not runs_inline_package(command.command)
+	runs_npm(checked_command(command))
+	not runs_inline_package(checked_command(command))
 
 	finding := policy_finding(
 		concat(" ", [
@@ -582,7 +589,7 @@ deny contains finding if {
 deny contains finding if {
 	some command in input.ciCommands
 	not command.path in github_document_paths
-	runs_pnpm(command.command)
+	runs_pnpm(checked_command(command))
 	project := project_for(command.projectRoot)
 	project.manager == "pnpm"
 	not is_true(object.get(command.env, "CI", false))

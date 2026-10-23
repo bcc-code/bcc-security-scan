@@ -238,3 +238,71 @@ test_pnpm_dev_engines_pin_without_package_manager_is_accepted if {
 	ids := finding_ids(policies.deny) with input as {"projects": [object.union(pnpm_project, {"package": dev_engines_pnpm})]}
 	not "javascript/pnpm-package-manager-field" in ids
 }
+
+container_command(command) := {"path": "Dockerfile", "projectRoot": ".", "command": command, "env": {"CI": "true"}}
+
+container_ids(command) := ids if {
+	ids := finding_ids(policies.deny) with input as {
+		"projects": [pnpm_project],
+		"ciCommands": [container_command(command)],
+		"containerBuilds": [{"path": "Dockerfile", "projectRoot": ".", "copiedFiles": ["pnpm-lock.yaml"]}],
+	}
+}
+
+ci_command_rules := {
+	"javascript/inline-package-install",
+	"javascript/npm-ci-required",
+	"javascript/npm-command-in-pnpm-ci",
+	"javascript/unsupported-ci-package-manager",
+	"javascript/pnpm-ci-environment",
+}
+
+test_container_may_install_an_allowed_pnpm_globally if {
+	every command in {
+		"npm install -g pnpm@12.13.0",
+		"npm i -g pnpm@11.0.0",
+		"npm install --global pnpm@12.15.0",
+		"npm install pnpm@12.13.0 -g",
+		"npm install -g pnpm@12.13.0 && pnpm install --frozen-lockfile",
+		"npm i --global pnpm@12.13.0     && pnpm --version",
+	} {
+		count(container_ids(command) & ci_command_rules) == 0
+	}
+}
+
+test_container_global_pnpm_install_needs_an_allowed_exact_version if {
+	every command in {
+		"npm install -g pnpm",
+		"npm install -g pnpm@latest",
+		"npm install -g pnpm@12",
+		"npm install -g pnpm@^12.0.0",
+		"npm install -g pnpm@10.30.0",
+		"npm install -g pnpm@12.0.0-rc.1",
+	} {
+		"javascript/inline-package-install" in container_ids(command)
+	}
+}
+
+test_container_global_pnpm_install_does_not_hide_other_packages if {
+	every command in {
+		"npm install -g pnpm@12.13.0 eslint",
+		"npm install -g pnpm@12.13.0 && npx eslint .",
+		"npm install -g pnpm@12.13.0; npm install -g eslint",
+	} {
+		"javascript/inline-package-install" in container_ids(command)
+	}
+}
+
+test_container_global_pnpm_install_does_not_hide_npm_install if {
+	"javascript/npm-command-in-pnpm-ci" in container_ids("npm install -g pnpm@12.13.0 && npm install")
+}
+
+# The exception only covers container builds, not GitHub workflows.
+test_workflow_global_pnpm_install_is_still_reported if {
+	ids := finding_ids(policies.deny) with input as {
+		"projects": [pnpm_project],
+		"githubDocuments": [{"path": ".github/workflows/ci.yml", "document": {}}],
+		"ciCommands": [{"path": ".github/workflows/ci.yml", "projectRoot": ".", "command": "npm install -g pnpm@12.13.0", "env": {}}],
+	}
+	"javascript/inline-package-install" in ids
+}

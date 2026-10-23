@@ -223,6 +223,38 @@ number_at_least(value, minimum) if {
 # Shell commands
 # ---------------------------------------------------------------------------
 
+# A CI or container command as the CI rules check it.
+# Container builds may install pnpm globally with an exact, allowed version
+# (`npm install -g pnpm@x.y.z`), because that is how images get pnpm.
+# Those installs are removed first; the rest of the command is still checked.
+checked_command(command) := strings.replace_n(
+	{install.text: install.replacement | some install in allowed_pnpm_global_installs(command.command)},
+	command.command,
+) if {
+	command.path in container_build_paths
+}
+
+checked_command(command) := command.command if {
+	not command.path in container_build_paths
+}
+
+container_build_paths := {build.path | some build in input.containerBuilds}
+
+# `npm install -g pnpm@x.y.z` (also `npm i`, `--global`, or the flag after the package)
+# with nothing else installed by the same npm command.
+pnpm_global_install_pattern := concat("", [
+	`(?im)npm(?:\.cmd)?[ \t]+(?:i|install)[ \t]+`,
+	`(?:(?:-g|--global)[ \t]+pnpm@([0-9]+\.[0-9]+\.[0-9]+)|pnpm@([0-9]+\.[0-9]+\.[0-9]+)[ \t]+(?:-g|--global))`,
+	`[ \t]*(?:$|([;&|]))`,
+])
+
+# Each allowed install's text, and what replaces it: the shell operator that ended it, if any.
+allowed_pnpm_global_installs(command) := {{"text": match[0], "replacement": sprintf(" %s", [match[3]])} |
+	some match in regex.find_all_string_submatch_n(pnpm_global_install_pattern, command, -1)
+	version := concat("", [match[1], match[2]])
+	semver.compare(version, "11.0.0") >= 0
+}
+
 # Matches `pattern` where a command starts: at the beginning of a line,
 # after a shell operator (`;`, `&`, `|`), or after whitespace.
 runs(command, pattern) if {
