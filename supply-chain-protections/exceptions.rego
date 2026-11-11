@@ -11,4 +11,5 @@ import rego.v1
 github_pin_exceptions := {
 	"bcc-code/bcc-platform-deploy/.github/workflows/landing-zone.yml@main",
 	"bcc-code/bcc-platform-deploy/.github/workflows/terraform.yml@main",
+	"bcc-code/bcc-developer-docs-deploy@v1",
 }
