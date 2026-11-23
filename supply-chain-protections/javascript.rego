@@ -210,11 +210,24 @@ pnpm_required_true_settings := {
 	"strictDepBuilds": "This fails when a dependency lifecycle script has not been reviewed.",
 }
 
+# engines.npm and engines.pnpm are published with a package, so they also restrict everyone who
+# installs a published library. devEngines is only read in the project being developed, so it can
+# enforce pnpm there without affecting consumers. npm 10.9.0 and newer refuse to install when
+# devEngines.packageManager names another package manager, and Node.js 22.10.0 is the first release
+# that bundles npm 10.9.0. engines.node keeps older Node.js, and so older npm, out through the
+# engine-strict=true that pnpm-npmrc-engine-strict requires.
+dev_engines_enforce_pnpm(package_document) if {
+	engine_at_least(object.get(object.get(package_document, "engines", {}), "node", ""), "22.10.0")
+	dev_engines_pinned_at_least(package_document, "pnpm", "11.0.0")
+}
+
 # Requires engines.npm=disallow, so tools and automation cannot fall back to npm,
 # which ignores the pnpm settings checked below.
+# Not required when dev_engines_enforce_pnpm holds: devEngines then stops npm instead.
 deny contains finding if {
 	some project in input.projects
 	project.manager == "pnpm"
+	not dev_engines_enforce_pnpm(project.package)
 	engines := object.get(project.package, "engines", {})
 	object.get(engines, "npm", "") != "disallow"
 
@@ -222,6 +235,8 @@ deny contains finding if {
 		concat(" ", [
 			sprintf("%s must set engines.npm=disallow because the project uses pnpm.", [project.packagePath]),
 			"This prevents tools and automation from falling back to npm.",
+			"Alternatively, set engines.node to >=22.10.0 and pin pnpm in devEngines.packageManager",
+			"(e.g. {\"name\": \"pnpm\", \"version\": \"11.0.0\"}), which does not restrict consumers of a published package.",
 		]),
 		project.packagePath,
 		"javascript/pnpm-disallow-npm",
@@ -231,10 +246,12 @@ deny contains finding if {
 # Requires pnpm 11.0.0 or newer, the first version with every setting checked below.
 # Only the workspace package needs it: there it stops older pnpm versions from installing
 # anywhere in the workspace, and running scripts without installing reads no supply-chain settings.
+# Not required when dev_engines_enforce_pnpm holds: devEngines then pins pnpm instead.
 deny contains finding if {
 	some project in input.projects
 	project.manager == "pnpm"
 	is_workspace_root(project)
+	not dev_engines_enforce_pnpm(project.package)
 	engines := object.get(project.package, "engines", {})
 	not engine_at_least(object.get(engines, "pnpm", ""), "11.0.0")
 
@@ -242,6 +259,8 @@ deny contains finding if {
 		concat(" ", [
 			sprintf("%s must set engines.pnpm to exclude versions older than 11.0.0.", [project.packagePath]),
 			"Older pnpm versions do not support the required supply-chain protections.",
+			"Alternatively, set engines.node to >=22.10.0 and pin pnpm in devEngines.packageManager",
+			"(e.g. {\"name\": \"pnpm\", \"version\": \"11.0.0\"}), which does not restrict consumers of a published package.",
 		]),
 		project.packagePath,
 		"javascript/minimum-pnpm-version",
