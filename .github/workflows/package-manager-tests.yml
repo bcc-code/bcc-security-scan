@@ -41,7 +41,7 @@ on:
         type: string
         default: ""
       pnpm-pin:
-        description: Exact pnpm version in devEngines pins; empty picks the newest listed pnpm >= 11.0.0 that is at least 7 days old
+        description: Exact pnpm version in devEngines pins; empty picks the newest listed pnpm >= 11.1.3 that is at least 7 days old
         type: string
         default: ""
       node-version:
@@ -113,7 +113,7 @@ jobs:
           retention-days: 14
 
   policy:
-    name: Policy check (${{ matrix.setup }})
+    name: Policy check (${{ matrix.setup.id }}, must ${{ matrix.setup.policy }})
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -143,48 +143,81 @@ jobs:
         continue-on-error: true
         uses: ./supply-chain-protections/check
         with:
-          path: fixtures/${{ matrix.setup }}/mature
+          path: fixtures/${{ matrix.setup.id }}/mature
+
+      - name: Keep the first SARIF report
+        if: always() && steps.mature.outputs.sarif != ''
+        env:
+          SARIF: ${{ steps.mature.outputs.sarif }}
+        run: cp "$SARIF" "$RUNNER_TEMP/mature.sarif" || true
 
       - name: Check the fixture that locks the fresh version
         id: fresh
         continue-on-error: true
         uses: ./supply-chain-protections/check
         with:
-          path: fixtures/${{ matrix.setup }}/fresh
+          path: fixtures/${{ matrix.setup.id }}/fresh
 
       - name: Record the result
         env:
-          SETUP: ${{ matrix.setup }}
+          SETUP: ${{ matrix.setup.id }}
+          EXPECTED: ${{ matrix.setup.policy }}
           MATURE_OUTCOME: ${{ steps.mature.outcome }}
           MATURE_EXIT: ${{ steps.mature.outputs.exit_code }}
+          MATURE_SARIF: ${{ steps.mature.outputs.sarif }}
           FRESH_OUTCOME: ${{ steps.fresh.outcome }}
           FRESH_EXIT: ${{ steps.fresh.outputs.exit_code }}
+          FRESH_SARIF: ${{ steps.fresh.outputs.sarif }}
         run: |
           set -euo pipefail
+
+          # The error messages, so the report can check why a fixture was rejected.
+          messages() {
+            if [[ -n "$1" && -f "$1" ]]; then
+              jq -c '[.runs[].results[] | select(.level == "error") | .message.text]' "$1" 2>/dev/null || echo '[]'
+            else
+              echo '[]'
+            fi
+          }
+
+          # Both checks write the same SARIF path, so read the fresh one now
+          # and the mature one from a copy made below.
+          mature_messages="$(messages "${MATURE_SARIF:+$RUNNER_TEMP/mature.sarif}")"
+          fresh_messages="$(messages "$FRESH_SARIF")"
 
           mkdir -p "$RUNNER_TEMP/policy-results"
           jq -n \
             --arg setup "$SETUP" \
+            --arg expected "$EXPECTED" \
             --arg mature_outcome "$MATURE_OUTCOME" \
             --arg mature_exit "$MATURE_EXIT" \
+            --argjson mature_messages "$mature_messages" \
             --arg fresh_outcome "$FRESH_OUTCOME" \
             --arg fresh_exit "$FRESH_EXIT" \
+            --argjson fresh_messages "$fresh_messages" \
             '{
               setup: $setup,
-              mature: {outcome: $mature_outcome, exitCode: $mature_exit},
-              fresh: {outcome: $fresh_outcome, exitCode: $fresh_exit}
+              expected: $expected,
+              mature: {outcome: $mature_outcome, exitCode: $mature_exit, messages: $mature_messages},
+              fresh: {outcome: $fresh_outcome, exitCode: $fresh_exit, messages: $fresh_messages}
             }' > "$RUNNER_TEMP/policy-results/$SETUP.json"
           cat "$RUNNER_TEMP/policy-results/$SETUP.json"
 
-          if [[ "$MATURE_OUTCOME" != "success" || "$MATURE_EXIT" != "0" ||
-                "$FRESH_OUTCOME" != "success" || "$FRESH_EXIT" != "0" ]]; then
+          accepted=false
+          if [[ "$MATURE_OUTCOME" == "success" && "$MATURE_EXIT" == "0" &&
+                "$FRESH_OUTCOME" == "success" && "$FRESH_EXIT" == "0" ]]; then
+            accepted=true
+          fi
+          if [[ "$EXPECTED" == "accept" && "$accepted" != "true" ]]; then
             echo "::error::The policy does not accept the $SETUP fixtures, so its test results do not describe an accepted setup."
+          elif [[ "$EXPECTED" == "reject" && "$accepted" == "true" ]]; then
+            echo "::error::The policy accepts the $SETUP fixtures, but must reject them."
           fi
 
       - name: Upload the result
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: policy-${{ matrix.setup }}
+          name: policy-${{ matrix.setup.id }}
           path: ${{ runner.temp }}/policy-results
           if-no-files-found: error
           retention-days: 14

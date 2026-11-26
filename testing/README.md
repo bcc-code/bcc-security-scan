@@ -15,7 +15,7 @@ The workflow is [`.github/workflows/package-manager-tests.yml`](../.github/workf
 
 - **Push to `testing-v1`** (changes under `testing/` or the workflow): runs a sample.
   The sample is the newest version of each major, plus the versions on both sides of
-  the policy minimums (npm 11.10.0, pnpm 11.0.0), plus the pnpm pin.
+  the policy minimums (npm 11.10.0, pnpm 11.1.3), plus the pnpm pin.
 - **Actions → Package manager version tests → Run workflow** on `testing-v1`: runs
   every listed version by default. Inputs:
 
@@ -43,8 +43,9 @@ GitHub allows at most 256 jobs per matrix.
    with the release-age settings switched off, as a developer or a dependency bot
    could do.
 2. **Policy check.** Runs the real `supply-chain-protections/check` action on every
-   fixture. A setup the policy rejects is flagged in the report and fails the run,
-   because its results would not describe an accepted setup.
+   fixture. The policy must accept the setups the package managers run against, and
+   reject the layouts that had gaps, for the expected reason. Anything else is flagged
+   in the report and fails the run.
 3. **One job per version.** Installs that npm or pnpm release with
    `npm install --global` into its own prefix. Then it runs every scenario of every
    setup. Each scenario gets a fresh copy of the fixture, an empty home folder and
@@ -55,21 +56,28 @@ GitHub allows at most 256 jobs per matrix.
 
 ### Setups
 
-All of them pass `policy-v1`; see [`lib/setups.mjs`](lib/setups.mjs) for the exact files.
+The package managers run against these; `policy-v1` must accept them. See
+[`lib/setups.mjs`](lib/setups.mjs) for the exact files.
 
 | Setup | Layout | Versions the policy means to allow |
 | --- | --- | --- |
 | `npm-single` | package.json, `.npmrc` with the required settings, package-lock.json | npm >= 11.10.0 |
 | `npm-dev-engines` | as above, plus `devEngines.packageManager` `>=11.10.0`, `onFail: error` | npm >= 11.10.0 |
-| `npm-workspace` | npm workspaces; commands run in `packages/app` | npm >= 11.10.0 |
-| `npm-parent-npmrc` | `app/` has package.json and lockfile; the only `.npmrc` is in the root | npm >= 11.10.0 |
-| `pnpm-single` | `engines`, `.npmrc` with `engine-strict`, the required `pnpm-workspace.yaml` settings, `pmOnFail: error` | pnpm >= 11.0.0 |
-| `pnpm-dev-engines-range` | as above, plus `devEngines.packageManager` `>=11.0.0` | pnpm >= 11.0.0 |
+| `npm-workspace` | npm workspaces, an `.npmrc` in the root and in `packages/app`; commands run in `packages/app` | npm >= 11.10.0 |
+| `pnpm-single` | `engines`, `.npmrc` with `engine-strict`, the required `pnpm-workspace.yaml` settings, `pmOnFail: error` | pnpm >= 11.1.3 |
+| `pnpm-dev-engines-range` | as above, plus `devEngines.packageManager` `>=11.1.3` | pnpm >= 11.1.3 |
 | `pnpm-pin-error` | `devEngines.packageManager` pinned to an exact version, `pmOnFail: error` | the pin only |
 | `pnpm-pin-download` | exact pin, `pmOnFail: download` | the pin only (others may hand over to it) |
 | `pnpm-pin-onfail-download` | exact pin with `onFail: download`, `pmOnFail: error` | the pin only (others may hand over to it) |
-| `pnpm-workspace` | pnpm workspace; commands run in `packages/app` | pnpm >= 11.0.0 |
-| `pnpm-workspace-no-root-manifest` | workspace without a root package.json; commands run in `app` | pnpm >= 11.0.0 |
+| `pnpm-workspace` | pnpm workspace; commands run in `packages/app` | pnpm >= 11.1.3 |
+
+The policy must **reject** these layouts, which it used to accept although package
+managers ignored their settings. They are only policy-checked:
+
+| Setup | Layout | Rejected because |
+| --- | --- | --- |
+| `npm-parent-npmrc` | `app/` has package.json and lockfile; the only `.npmrc` is in the root | npm reads only the `.npmrc` of the folder it runs in; every npm version installed fresh versions |
+| `pnpm-workspace-no-root-manifest` | pnpm workspace without a root package.json | nothing sets `engines.pnpm`; pnpm 7 to 10 installed fresh versions |
 
 For cross-manager runs, npm in any pnpm setup must be refused (`engines.npm=disallow`).
 pnpm in an npm setup is reported, but the policy does not cover it, so it never counts
@@ -119,7 +127,7 @@ A package is skipped when the latest version has weaker provenance than earlier
 ones, because pnpm's `trustPolicy: no-downgrade` would block it for a different
 reason.
 
-The pnpm pin defaults to the newest listed pnpm >= 11.0.0 that is at least 7 days
+The pnpm pin defaults to the newest listed pnpm >= 11.1.3 that is at least 7 days
 old. With `pmOnFail: download`, pnpm applies `minimumReleaseAge` to the pnpm it
 downloads, so a younger pin could not be fetched.
 
@@ -130,7 +138,6 @@ Node.js, which only runs the test scripts.
 
 | Package manager | Node.js |
 | --- | --- |
-| npm 2 | 4 |
 | npm 5 | 8 |
 | npm 6 | 14 |
 | npm 7, pnpm 7 | 16 |

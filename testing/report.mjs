@@ -16,7 +16,7 @@ import {
   unique,
   writeJson,
 } from "./lib/common.mjs";
-import { SCENARIOS, expectationFor, setupById } from "./lib/setups.mjs";
+import { KNOWN_GAPS, SCENARIOS, expectationFor, knownGap, setupById } from "./lib/setups.mjs";
 
 const SUMMARY_LIMIT = 900 * 1024; // GitHub's step summary limit is 1 MiB.
 
@@ -54,16 +54,28 @@ function readPolicy(dir) {
   return policy;
 }
 
-function policyStatus(check) {
+// Whether the policy treated a fixture the way the setup expects:
+// accepted, or rejected with a message containing setup.rejectedWith.
+function policyStatus(setup, check) {
   if (!check) {
-    return { accepted: null, text: "not checked" };
+    return { ok: null, text: "not checked" };
   }
   if (check.outcome !== "success") {
-    return { accepted: false, text: `check failed (${check.outcome || "no result"})` };
+    return { ok: false, text: `check failed (${check.outcome || "no result"})` };
   }
-  return String(check.exitCode) === "0"
-    ? { accepted: true, text: "accepted" }
-    : { accepted: false, text: `rejected (Conftest exit ${check.exitCode})` };
+  const accepted = String(check.exitCode) === "0";
+  const messages = check.messages ?? [];
+  if (setup.policy === "accept") {
+    return accepted
+      ? { ok: true, text: "accepted" }
+      : { ok: false, text: `rejected: ${messages[0] ?? `Conftest exit ${check.exitCode}`}` };
+  }
+  if (accepted) {
+    return { ok: false, text: "accepted, but must be rejected" };
+  }
+  return messages.some(message => message.includes(setup.rejectedWith))
+    ? { ok: true, text: "rejected" }
+    : { ok: false, text: `rejected for another reason: ${messages[0] ?? `Conftest exit ${check.exitCode}`}` };
 }
 
 function evaluate(report, setup, context) {
@@ -92,21 +104,33 @@ function evaluate(report, setup, context) {
   }
 
   const fresh = kind => rows.filter(row => row.fresh === kind).map(row => row.scenario);
-  const violations = [];
 
+  // Every finding, one per scenario, then split into known gaps and the rest.
+  const findings = [];
   if (expectation) {
-    const disallowed = ran.filter(row => !expectation.allows(row.performer, context));
-    if (disallowed.length > 0) {
-      violations.push({
-        kind: "disallowed-version",
-        scenarios: disallowed.map(row => row.scenario),
-        performers: unique(disallowed.map(row => row.performer)),
-      });
+    for (const row of ran.filter(row => !expectation.allows(row.performer, context))) {
+      findings.push({ kind: "disallowed-version", scenario: row.scenario, performer: row.performer });
     }
     for (const kind of ["installed", "linked"]) {
-      if (fresh(kind).length > 0) {
-        violations.push({ kind: `fresh-${kind}`, scenarios: fresh(kind) });
+      for (const scenario of fresh(kind)) {
+        findings.push({ kind: `fresh-${kind}`, scenario });
       }
+    }
+  }
+  const violations = [];
+  const known = [];
+  for (const finding of findings) {
+    const gap = knownGap(report.manager, tested, setup, finding.kind, finding.scenario);
+    const target = gap ? known : violations;
+    const key = gap ? `${gap.id}|${finding.kind}` : finding.kind;
+    let entry = target.find(candidate => candidate.key === key);
+    if (!entry) {
+      entry = { key, kind: finding.kind, gap: gap?.id ?? null, scenarios: [], performers: [] };
+      target.push(entry);
+    }
+    entry.scenarios.push(finding.scenario);
+    if (finding.performer) {
+      entry.performers = unique([...entry.performers, finding.performer]);
     }
   }
 
@@ -126,6 +150,7 @@ function evaluate(report, setup, context) {
     freshLinked: fresh("linked"),
     freshStoreOnly: fresh("store-only"),
     violations,
+    known,
     unexpectedBlock,
     blockedBy: state === "blocked"
       ? unique(rows.map(row => row.errorCode).filter(Boolean))
@@ -153,6 +178,8 @@ function cell(evaluation) {
   }
   if (evaluation.violations.length > 0) {
     text = `❗${text}`;
+  } else if (evaluation.known.length > 0) {
+    text += " ⓚ";
   }
   if (evaluation.unexpectedBlock) {
     text += " ⁉️";
@@ -190,7 +217,9 @@ function main() {
   const failOnViolation = (args["fail-on-violation"] ?? "true") === "true";
   const manifest = readJson(path.join(args.fixtures, "manifest.json"));
   const context = manifest.context;
-  const setups = manifest.setups.map(entry => setupById(entry.id));
+  const allSetups = manifest.setups.map(entry => setupById(entry.id));
+  // Package managers run only against the setups the policy accepts.
+  const setups = allSetups.filter(setup => setup.policy === "accept");
   const reports = readResults(args.results);
   const policy = readPolicy(args.policy);
   const out = path.resolve(args.out);
@@ -212,14 +241,15 @@ function main() {
     }
   }
 
-  const policyRows = setups.map(setup => {
-    const mature = policyStatus(policy[setup.id]?.mature);
-    const fresh = policyStatus(policy[setup.id]?.fresh);
+  const policyRows = allSetups.map(setup => {
+    const mature = policyStatus(setup, policy[setup.id]?.mature);
+    const fresh = policyStatus(setup, policy[setup.id]?.fresh);
     return { setup, mature, fresh };
   });
-  const rejected = policyRows.filter(row => row.mature.accepted === false || row.fresh.accepted === false);
-  const unchecked = policyRows.filter(row => row.mature.accepted === null || row.fresh.accepted === null);
+  const mismatched = policyRows.filter(row => row.mature.ok === false || row.fresh.ok === false);
+  const unchecked = policyRows.filter(row => row.mature.ok === null || row.fresh.ok === null);
   const violations = evaluations.filter(evaluation => evaluation.violations.length > 0);
+  const knownOnly = evaluations.filter(evaluation => evaluation.violations.length === 0 && evaluation.known.length > 0);
   const unexpected = evaluations.filter(evaluation => evaluation.unexpectedBlock);
 
   const lines = [];
@@ -242,14 +272,14 @@ function main() {
 
   // Overall verdict.
   add("## Verdict", "");
-  if (violations.length === 0 && rejected.length === 0 && missing.length === 0 && installErrors.length === 0) {
-    add("✅ Every tested version behaved as the policy intends in every accepted setup.", "");
+  if (violations.length === 0 && mismatched.length === 0 && missing.length === 0 && installErrors.length === 0) {
+    add("✅ The policy accepted and rejected the expected setups, and every tested version behaved as the policy intends in every accepted setup.", "");
   } else {
     if (violations.length > 0) {
       add(`❗ ${violations.length} version-and-setup combinations contradict the policy's intent (see [Policy gaps](#policy-gaps)).`);
     }
-    if (rejected.length > 0) {
-      add(`❗ The policy rejects ${rejected.length} fixture setups, so their results do not describe accepted setups: ${rejected.map(row => `\`${row.setup.id}\``).join(", ")}.`);
+    if (mismatched.length > 0) {
+      add(`❗ The policy did not treat ${mismatched.length} setups as expected (see [Setups](#setups)): ${mismatched.map(row => `\`${row.setup.id}\``).join(", ")}.`);
     }
     if (missing.length > 0) {
       add(`⚠️ ${missing.length} planned versions reported no results: ${missing.map(entry => `${entry.manager}@${entry.version}`).join(", ")}.`);
@@ -258,6 +288,9 @@ function main() {
       add(`⚠️ ${installErrors.length} versions could not be installed or run: ${installErrors.map(report => `${report.manager}@${report.version}`).join(", ")}.`);
     }
     add("");
+  }
+  if (knownOnly.length > 0) {
+    add(`ⓚ ${knownOnly.length} combinations show only gaps the policy cannot close (see [Known gaps](#known-gaps)); they do not fail the run.`, "");
   }
   if (unexpected.length > 0) {
     add(`⁉️ ${unexpected.length} combinations blocked a version the policy means to allow (see [Unexpected blocks](#unexpected-blocks)).`, "");
@@ -268,14 +301,16 @@ function main() {
     "## Setups",
     "",
     "Every setup is checked with the `supply-chain-protections/check` action against the `policy-v1` policy, once with each lockfile.",
+    "The policy must accept the setups the package managers run against, and reject the layouts that had gaps.",
     "",
     table(
-      ["Setup", "Manager", "Allowed versions (policy intent)", "Policy check (mature / fresh lock)", "Layout"],
+      ["Setup", "Manager", "Policy must", "Allowed versions (policy intent)", "Policy check (mature / fresh lock)", "Layout"],
       policyRows.map(({ setup, mature, fresh }) => [
         `\`${setup.id}\``,
         setup.manager,
-        setup.expects.replace("pin", `pin (${context.pin})`),
-        `${mature.accepted === false ? "❗ " : ""}${mature.text} / ${fresh.text}`,
+        setup.policy === "accept" ? "accept" : `reject ("${setup.rejectedWith}")`,
+        setup.policy === "accept" ? setup.expects.replace("pin", `pin (${context.pin})`) : "— (not run)",
+        `${mature.ok === false || fresh.ok === false ? "❗ " : mature.ok && fresh.ok ? "✅ " : ""}${mature.text} / ${fresh.text}`,
         setup.notes,
       ]),
     ),
@@ -293,7 +328,7 @@ function main() {
     "",
     "Cells: 🟢 the version ran; 🔁*x* it handed over to version *x*; 🛑 it refused to run (engines, devEngines or pmOnFail); ⚠️ it failed for another reason.",
     "❌ a fresh version (younger than 7 days) was installed, ✖️ the command failed but left a fresh version loadable in node_modules, 🟠 a fresh version was extracted only into node_modules/.pnpm; followed by the scenario letters.",
-    "❗ contradicts the policy's intent; ⁉️ a version the policy means to allow was blocked.",
+    "❗ contradicts the policy's intent; ⓚ only a [known gap](#known-gaps) the policy cannot close; ⁉️ a version the policy means to allow was blocked.",
     "",
   );
 
@@ -328,12 +363,15 @@ function main() {
           .map(evaluation => `${evaluation.setup} (${[...evaluation.freshInstalled, ...evaluation.freshLinked].map(short).join("")})`);
         const all = [...own_, ...other.map(setup => find(report.version, setup)).filter(Boolean)];
         const gaps = all.filter(evaluation => evaluation.violations.length > 0).length;
+        const knownGaps = all.filter(evaluation => evaluation.violations.length === 0 && evaluation.known.length > 0).length;
         const blockedWrongly = all.filter(evaluation => evaluation.unexpectedBlock).length;
         const result = gaps > 0
           ? `❗ ${gaps} gap${gaps === 1 ? "" : "s"}`
           : blockedWrongly > 0
             ? `⁉️ ${blockedWrongly} unexpected block${blockedWrongly === 1 ? "" : "s"}`
-            : "✅";
+            : knownGaps > 0
+              ? `✅ (ⓚ ${knownGaps} known)`
+              : "✅";
         return [
           report.version,
           report.node,
@@ -397,6 +435,40 @@ function main() {
       setupOrder(left.setups[0]) - setupOrder(right.setups[0]));
     for (const group of ordered) {
       add(`- **${group.manager}** in ${group.setups.map(id => `\`${id}\``).join(", ")} (intended: ${group.rule}): ${KIND_TEXT[group.kind]}: ${group.versions}`);
+    }
+    add("");
+  }
+
+  add(
+    "## Known gaps",
+    "",
+    "The policy cannot close these: no file in a repository changes how these package manager versions behave.",
+    "They are listed in `KNOWN_GAPS` in testing/lib/setups.mjs and do not fail the run.",
+    "",
+  );
+  const knownEntries = evaluations.flatMap(evaluation =>
+    evaluation.known.map(entry => ({ evaluation, entry })));
+  if (knownEntries.length === 0) {
+    add("None seen in this run.", "");
+  } else {
+    for (const gap of KNOWN_GAPS) {
+      const entries = knownEntries.filter(({ entry }) => entry.gap === gap.id);
+      if (entries.length === 0) {
+        continue;
+      }
+      const versions = new Map();
+      for (const { evaluation, entry } of entries) {
+        const detail = versions.get(evaluation.version) ?? new Set();
+        for (const scenario of entry.scenarios) {
+          detail.add(short(scenario));
+        }
+        versions.set(evaluation.version, detail);
+      }
+      const setupsSeen = unique(entries.map(({ evaluation }) => evaluation.setup));
+      add(
+        `- **${gap.id}** (${gap.manager}, ${setupsSeen.length} setups): ${gap.reason}`,
+        `  Versions: ${listVersions([...versions].map(([version, letters]) => ({ version, detail: [...letters].sort().join("") })))}`,
+      );
     }
     add("");
   }
@@ -493,13 +565,14 @@ function main() {
 
   const failures = [
     ...(failOnViolation && violations.length > 0 ? [`${violations.length} policy gaps`] : []),
-    ...(rejected.length > 0 ? [`${rejected.length} setups rejected by the policy`] : []),
+    ...(mismatched.length > 0 ? [`${mismatched.length} setups not treated as expected by the policy`] : []),
     ...(args["require-policy"] === "true" && unchecked.length > 0 ? [`${unchecked.length} setups without a policy check`] : []),
     ...(missing.length > 0 ? [`${missing.length} versions without results`] : []),
   ];
   if (failures.length > 0) {
     console.log(`::error::${failures.join("; ")}`);
-    process.exit(1);
+    // Not process.exit(): it would cut off the report still being written to a piped stdout.
+    process.exitCode = 1;
   }
 }
 

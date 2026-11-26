@@ -51,7 +51,7 @@ const MATURE_MIN_AGE_DAYS = 8;
 // Node.js major for each package manager major: the line that shipped with, or was
 // current for, that release. Override with NODE_VERSION.
 const NODE_BY_MAJOR = {
-  npm: { 2: "4", 3: "6", 4: "6", 5: "8", 6: "14", 7: "16", 8: "18", 9: "20", 10: "22", 11: "24", 12: "24" },
+  npm: { 5: "8", 6: "14", 7: "16", 8: "18", 9: "20", 10: "22", 11: "24", 12: "24" },
   pnpm: { 6: "14", 7: "16", 8: "18", 9: "20", 10: "22", 11: "24", 12: "24" },
 };
 
@@ -393,8 +393,8 @@ async function main() {
       times: pkg.times,
     },
     generators: { npm: npmGenerator, pnpm: pin },
-    setups: SETUPS.map(({ id, manager, title, notes, cwd, expects }) =>
-      ({ id, manager, title, notes, cwd, expects })),
+    setups: SETUPS.map(({ id, manager, policy, rejectedWith, title, notes, cwd, expects }) =>
+      ({ id, manager, policy, rejectedWith, title, notes, cwd, expects })),
     scenarios: SCENARIOS.map(({ id, short, title, notes, variant, ci, sameManagerOnly }) =>
       ({ id, short, title, notes, variant, ci, sameManagerOnly: Boolean(sameManagerOnly) })),
     plan: { scope: useOverrides ? "custom" : scope, managers, crossManager, nodeOverride, skipped, ...plan },
@@ -404,7 +404,7 @@ async function main() {
 
   appendOutput("npm", JSON.stringify(plan.npm));
   appendOutput("pnpm", JSON.stringify(plan.pnpm));
-  appendOutput("setups", JSON.stringify(SETUPS.map(setup => setup.id)));
+  appendOutput("setups", JSON.stringify(SETUPS.map(setup => ({ id: setup.id, policy: setup.policy }))));
 
   const age = version => ageInDays(pkg.times[version], now).toFixed(1);
   const summary = [

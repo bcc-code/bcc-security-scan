@@ -1,16 +1,21 @@
 // Project setups and scenarios for the package manager tests.
 //
-// Every setup is a layout that the supply-chain policy on the policy-v1 branch
-// accepts. The workflow checks each generated fixture with the real check action,
-// and the report flags any setup the policy rejects, so a policy change cannot
+// Setups with policy "accept" are layouts that the supply-chain policy on the
+// policy-v1 branch accepts; every package manager version runs against them.
+// Setups with policy "reject" are layouts that earlier versions of the policy
+// accepted although package managers ignored their settings; the policy must now
+// reject them, with a message containing `rejectedWith`. They are only policy-checked.
+// The workflow checks each generated fixture with the real check action, and the
+// report flags any setup the policy treats differently, so a policy change cannot
 // quietly turn these into tests of layouts the policy no longer allows.
 
-import { atLeast } from "./common.mjs";
+import { atLeast, majorOf } from "./common.mjs";
 
-// The minimum versions the policy requires (javascript/minimum-npm-version and
-// javascript/minimum-pnpm-version).
+// The minimum versions the policy requires (npm_minimum_version and
+// pnpm_minimum_version in javascript.rego). pnpm 11.1.3 is the first version
+// that rejects a lockfile pinning a version younger than minimumReleaseAge.
 export const NPM_MINIMUM = "11.10.0";
-export const PNPM_MINIMUM = "11.0.0";
+export const PNPM_MINIMUM = "11.1.3";
 
 const lines = (...values) => `${values.join("\n")}\n`;
 
@@ -55,6 +60,7 @@ const pnpmVersionAllowed = performer => atLeast(performer, PNPM_MINIMUM);
 
 // Fields of a setup:
 //   id, manager, title, notes
+//   policy   "accept" or "reject" (see above); rejectedWith for "reject"
 //   cwd      where the scenario commands run, relative to the fixture root
 //   lockDir  where the lockfile is generated, relative to the fixture root
 //   lockfile path of the lockfile, relative to the fixture root
@@ -65,6 +71,7 @@ export const SETUPS = [
   {
     id: "npm-single",
     manager: "npm",
+    policy: "accept",
     title: "npm, single package",
     notes: "package.json, .npmrc and package-lock.json in one folder.",
     cwd: ".",
@@ -83,6 +90,7 @@ export const SETUPS = [
   {
     id: "npm-dev-engines",
     manager: "npm",
+    policy: "accept",
     title: "npm, devEngines.packageManager",
     notes: `As npm-single, plus devEngines.packageManager {name: npm, version: ">=${NPM_MINIMUM}", onFail: error}.`,
     cwd: ".",
@@ -104,8 +112,9 @@ export const SETUPS = [
   {
     id: "npm-workspace",
     manager: "npm",
+    policy: "accept",
     title: "npm workspaces, run in a workspace package",
-    notes: "Root package.json with workspaces, root .npmrc and package-lock.json; commands run in packages/app.",
+    notes: "Root package.json with workspaces, root .npmrc and package-lock.json; packages/app has its own .npmrc too. Commands run in packages/app.",
     cwd: "packages/app",
     lockDir: ".",
     lockfile: "package-lock.json",
@@ -121,13 +130,16 @@ export const SETUPS = [
         engines: npmEngines,
         dependencies: { [context.pkg]: spec },
       }),
+      "packages/app/.npmrc": NPMRC_FOR_NPM,
     }),
   },
   {
     id: "npm-parent-npmrc",
     manager: "npm",
-    title: "npm, .npmrc in a parent folder",
-    notes: "app/package.json and app/package-lock.json; the only .npmrc is in the repository root, which the policy accepts as the closest one.",
+    policy: "reject",
+    rejectedWith: "app/.npmrc must exist",
+    title: "npm, .npmrc only in a parent folder",
+    notes: "app/package.json and app/package-lock.json; the only .npmrc is in the repository root. npm ignores it, so every npm version installed fresh versions here.",
     cwd: "app",
     lockDir: "app",
     lockfile: "app/package-lock.json",
@@ -144,6 +156,7 @@ export const SETUPS = [
   {
     id: "pnpm-single",
     manager: "pnpm",
+    policy: "accept",
     title: "pnpm, single package, pmOnFail: error",
     notes: "engines.pnpm and engines.npm=disallow, .npmrc with engine-strict, the required pnpm-workspace.yaml settings, no devEngines.",
     cwd: ".",
@@ -163,6 +176,7 @@ export const SETUPS = [
   {
     id: "pnpm-dev-engines-range",
     manager: "pnpm",
+    policy: "accept",
     title: "pnpm, devEngines range, pmOnFail: error",
     notes: `As pnpm-single, plus devEngines.packageManager {name: pnpm, version: ">=${PNPM_MINIMUM}"}.`,
     cwd: ".",
@@ -183,6 +197,7 @@ export const SETUPS = [
   {
     id: "pnpm-pin-error",
     manager: "pnpm",
+    policy: "accept",
     title: "pnpm, devEngines exact pin, pmOnFail: error",
     notes: "As pnpm-single, plus devEngines.packageManager pinned to the exact pin version. Other versions must stop.",
     cwd: ".",
@@ -203,6 +218,7 @@ export const SETUPS = [
   {
     id: "pnpm-pin-download",
     manager: "pnpm",
+    policy: "accept",
     title: "pnpm, devEngines exact pin, pmOnFail: download",
     notes: "devEngines.packageManager pinned to the pin version; pmOnFail: download makes other versions switch to it.",
     cwd: ".",
@@ -223,6 +239,7 @@ export const SETUPS = [
   {
     id: "pnpm-pin-onfail-download",
     manager: "pnpm",
+    policy: "accept",
     title: "pnpm, devEngines exact pin with onFail: download, pmOnFail: error",
     notes: "devEngines.packageManager {version: pin, onFail: download} with pmOnFail: error.",
     cwd: ".",
@@ -245,6 +262,7 @@ export const SETUPS = [
   {
     id: "pnpm-workspace",
     manager: "pnpm",
+    policy: "accept",
     title: "pnpm workspace, run in a workspace package",
     notes: "Root package.json with engines.pnpm, pnpm-workspace.yaml listing packages/*; packages/app has engines.npm=disallow and its own .npmrc. Commands run in packages/app.",
     cwd: "packages/app",
@@ -266,8 +284,10 @@ export const SETUPS = [
   {
     id: "pnpm-workspace-no-root-manifest",
     manager: "pnpm",
+    policy: "reject",
+    rejectedWith: "package.json must exist next to pnpm-workspace.yaml",
     title: "pnpm workspace without a root package.json",
-    notes: "pnpm-workspace.yaml and pnpm-lock.yaml in the root, no root package.json; app has engines.npm=disallow and its own .npmrc. The policy only requires engines.pnpm in the workspace package, which does not exist here.",
+    notes: "pnpm-workspace.yaml and pnpm-lock.yaml in the root, no root package.json; app has engines.npm=disallow and its own .npmrc. Nothing sets engines.pnpm, so pnpm 7 to 10 installed fresh versions here.",
     cwd: "app",
     // pnpm needs a package.json to run in; it finds the workspace root from here.
     lockDir: "app",
@@ -335,6 +355,52 @@ export const SCENARIOS = [
     args: { npm: () => ["ci"], pnpm: () => ["install", "--frozen-lockfile"] },
   },
 ];
+
+// Gaps the policy cannot close, because no file in a repository changes the package
+// manager's behaviour. The report lists them separately and does not fail on them.
+// Keep the matches narrow: any other gap still fails the run.
+//   manager       the package manager that runs
+//   setupManager  the manager of the setups it applies to (null: any)
+//   versions      which versions of `manager` it applies to
+//   scenarios, kinds  which findings it explains (kinds as in report.mjs)
+export const KNOWN_GAPS = [
+  {
+    id: "npm-ci-installs-locked-fresh-versions",
+    manager: "npm",
+    setupManager: "npm",
+    versions: () => true,
+    scenarios: ["ci-fresh-lock"],
+    kinds: ["fresh-installed"],
+    reason: "npm applies min-release-age only when it resolves a version; npm ci installs whatever package-lock.json pins. The policy keeps accepting npm and says so in its javascript/prefer-pnpm warning.",
+  },
+  {
+    id: "npm-6-ignores-engines-for-named-installs",
+    manager: "npm",
+    setupManager: null,
+    versions: version => majorOf(version) !== null && majorOf(version) < 7,
+    scenarios: ["add-fresh", "add-latest"],
+    kinds: ["disallowed-version", "fresh-installed"],
+    reason: "npm 6 and older check engines.npm only on a plain npm install, not when installing a named package, and do not know min-release-age. Nothing in a repository stops them locally; in CI the policy allows only npm ci.",
+  },
+  {
+    id: "pnpm-11-links-before-the-lockfile-check-fails",
+    manager: "pnpm",
+    setupManager: "pnpm",
+    versions: version => atLeast(version, "11.7.0") && !atLeast(version, "12.0.0"),
+    scenarios: ["ci-fresh-lock"],
+    kinds: ["fresh-linked"],
+    reason: "pnpm 11.7 and later 11.x releases reject the lockfile, so the install fails, but can link the fresh version into node_modules before the check finishes. pnpm 12 leaves it only in node_modules/.pnpm.",
+  },
+];
+
+export function knownGap(manager, version, setup, kind, scenario) {
+  return KNOWN_GAPS.find(gap =>
+    gap.manager === manager &&
+    (gap.setupManager === null || gap.setupManager === setup.manager) &&
+    gap.scenarios.includes(scenario) &&
+    gap.kinds.includes(kind) &&
+    gap.versions(version)) ?? null;
+}
 
 // Which package manager versions the policy means to allow when `manager` runs in
 // `setup`. Returns null when the policy does not cover the combination.

@@ -205,8 +205,10 @@ function main() {
     console.log(`::error::${name}: ${report.installError.split("\n")[0]}`);
   }
 
+  // Setups the policy must reject are only policy-checked.
   const setups = manifest.setups
     .map(entry => setupById(entry.id))
+    .filter(setup => setup.policy === "accept")
     .filter(setup => setup.manager === manager || manifest.plan.crossManager);
 
   report.probes = {};
