@@ -1,0 +1,336 @@
+name: Package manager version tests
+
+run-name: >-
+  Package manager version tests
+  (${{ github.event_name == 'push' && 'sample' || inputs.versions != '' && 'custom' || inputs.scope }})
+
+# Tests, for every npm and pnpm version in testing/versions, whether the version is
+# allowed to install in each setup the supply-chain policy accepts, and whether it
+# installs a dependency version younger than 7 days. See testing/README.md.
+
+on:
+  push:
+    branches:
+      - testing-v1
+    paths:
+      - testing/**
+      - .github/workflows/package-manager-tests.yml
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: full runs every listed version; sample runs the newest of each major and the versions around the policy minimums
+        type: choice
+        options:
+          - full
+          - sample
+        default: full
+      managers:
+        description: Package managers to test
+        type: choice
+        options:
+          - both
+          - npm
+          - pnpm
+        default: both
+      versions:
+        description: Only these versions, e.g. "npm@11.21.3 pnpm@11.29.0" (overrides scope)
+        type: string
+        default: ""
+      test-package:
+        description: Test package; empty picks electron-to-chromium or caniuse-lite
+        type: string
+        default: ""
+      pnpm-pin:
+        description: Exact pnpm version in devEngines pins; empty picks the newest listed pnpm >= 11.0.0 that is at least 7 days old
+        type: string
+        default: ""
+      node-version:
+        description: Node.js version for every package manager; empty picks one per major version
+        type: string
+        default: ""
+      cross-manager:
+        description: Also run each package manager on the other manager's setups
+        type: boolean
+        default: true
+      fail-on-violation:
+        description: Fail the report job when a version contradicts the policy's intent
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: package-manager-tests-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+env:
+  # Runs the test scripts and the lockfile generators.
+  HOST_NODE_VERSION: "24"
+
+jobs:
+  prepare:
+    name: Prepare fixtures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read  # This is required for actions/checkout
+
+    outputs:
+      npm: ${{ steps.prepare.outputs.npm }}
+      pnpm: ${{ steps.prepare.outputs.pnpm }}
+      setups: ${{ steps.prepare.outputs.setups }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.HOST_NODE_VERSION }}
+
+      - name: Generate fixtures and plan the matrix
+        id: prepare
+        env:
+          SCOPE: ${{ github.event_name == 'push' && 'sample' || inputs.scope }}
+          MANAGERS: ${{ inputs.managers || 'both' }}
+          VERSIONS: ${{ inputs.versions }}
+          TEST_PACKAGE: ${{ inputs.test-package }}
+          PNPM_PIN: ${{ inputs.pnpm-pin }}
+          NODE_VERSION: ${{ inputs.node-version }}
+          CROSS_MANAGER: ${{ github.event_name == 'push' || inputs.cross-manager }}
+        run: node testing/prepare.mjs --out "$RUNNER_TEMP/fixtures"
+
+      - name: Upload fixtures
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fixtures
+          path: ${{ runner.temp }}/fixtures
+          include-hidden-files: true  # The fixtures' .npmrc files
+          if-no-files-found: error
+          retention-days: 14
+
+  policy:
+    name: Policy check (${{ matrix.setup }})
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read  # This is required for actions/checkout
+
+    strategy:
+      fail-fast: false
+      matrix:
+        setup: ${{ fromJSON(needs.prepare.outputs.setups) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Download fixtures
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: fixtures
+          path: fixtures
+
+      - name: Check the fixture that locks the mature version
+        id: mature
+        continue-on-error: true
+        uses: ./supply-chain-protections/check
+        with:
+          path: fixtures/${{ matrix.setup }}/mature
+
+      - name: Check the fixture that locks the fresh version
+        id: fresh
+        continue-on-error: true
+        uses: ./supply-chain-protections/check
+        with:
+          path: fixtures/${{ matrix.setup }}/fresh
+
+      - name: Record the result
+        env:
+          SETUP: ${{ matrix.setup }}
+          MATURE_OUTCOME: ${{ steps.mature.outcome }}
+          MATURE_EXIT: ${{ steps.mature.outputs.exit_code }}
+          FRESH_OUTCOME: ${{ steps.fresh.outcome }}
+          FRESH_EXIT: ${{ steps.fresh.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$RUNNER_TEMP/policy-results"
+          jq -n \
+            --arg setup "$SETUP" \
+            --arg mature_outcome "$MATURE_OUTCOME" \
+            --arg mature_exit "$MATURE_EXIT" \
+            --arg fresh_outcome "$FRESH_OUTCOME" \
+            --arg fresh_exit "$FRESH_EXIT" \
+            '{
+              setup: $setup,
+              mature: {outcome: $mature_outcome, exitCode: $mature_exit},
+              fresh: {outcome: $fresh_outcome, exitCode: $fresh_exit}
+            }' > "$RUNNER_TEMP/policy-results/$SETUP.json"
+          cat "$RUNNER_TEMP/policy-results/$SETUP.json"
+
+          if [[ "$MATURE_OUTCOME" != "success" || "$MATURE_EXIT" != "0" ||
+                "$FRESH_OUTCOME" != "success" || "$FRESH_EXIT" != "0" ]]; then
+            echo "::error::The policy does not accept the $SETUP fixtures, so its test results do not describe an accepted setup."
+          fi
+
+      - name: Upload the result
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: policy-${{ matrix.setup }}
+          path: ${{ runner.temp }}/policy-results
+          if-no-files-found: error
+          retention-days: 14
+
+  npm:
+    name: npm ${{ matrix.version }}
+    needs: prepare
+    if: needs.prepare.outputs.npm != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read  # This is required for actions/checkout
+
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.npm) }}
+
+    steps: &test-steps
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Set up Node.js for the test scripts
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.HOST_NODE_VERSION }}
+
+      - name: Remember the host Node.js
+        run: echo "HOST_NODE=$(command -v node)" >> "$GITHUB_ENV"
+
+      - name: Set up Node.js ${{ matrix.node }} for ${{ matrix.manager }} ${{ matrix.version }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Remember the test Node.js
+        run: echo "TEST_NODE=$(command -v node)" >> "$GITHUB_ENV"
+
+      - name: Download fixtures
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: fixtures
+          path: ${{ runner.temp }}/fixtures
+
+      - name: Run every setup and scenario
+        env:
+          MANAGER: ${{ matrix.manager }}
+          VERSION: ${{ matrix.version }}
+        run: >-
+          "$HOST_NODE" testing/run.mjs
+          --manager "$MANAGER"
+          --version "$VERSION"
+          --node "$TEST_NODE"
+          --fixtures "$RUNNER_TEMP/fixtures"
+          --out "$RUNNER_TEMP/results"
+
+      - name: Upload results and logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pm-${{ matrix.manager }}-${{ matrix.version }}
+          path: ${{ runner.temp }}/results
+          if-no-files-found: warn
+          retention-days: 14
+
+  pnpm:
+    name: pnpm ${{ matrix.version }}
+    needs: prepare
+    if: needs.prepare.outputs.pnpm != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read  # This is required for actions/checkout
+
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.pnpm) }}
+
+    steps: *test-steps
+
+  report:
+    name: Report
+    needs: [prepare, policy, npm, pnpm]
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read  # This is required for actions/checkout
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.HOST_NODE_VERSION }}
+
+      - name: Download fixtures
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: fixtures
+          path: ${{ runner.temp }}/fixtures
+
+      - name: Download policy checks
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: policy-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/policy-results
+
+      - name: Download test results
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: pm-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/results
+
+      - name: Write the report
+        env:
+          FAIL_ON_VIOLATION: ${{ github.event_name == 'push' || inputs.fail-on-violation }}
+        run: >-
+          node testing/report.mjs
+          --fixtures "$RUNNER_TEMP/fixtures"
+          --results "$RUNNER_TEMP/results"
+          --policy "$RUNNER_TEMP/policy-results"
+          --out "$RUNNER_TEMP/report"
+          --fail-on-violation "$FAIL_ON_VIOLATION"
+          --require-policy true
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-manager-test-report
+          path: ${{ runner.temp }}/report
+          if-no-files-found: warn
+          retention-days: 30
