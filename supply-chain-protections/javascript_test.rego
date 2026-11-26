@@ -391,38 +391,58 @@ test_workflow_global_pnpm_install_is_still_reported if {
 	"javascript/inline-package-install" in ids
 }
 
-# A package on Node.js 22.10.0+ with pnpm pinned in devEngines does not need engines.npm or engines.pnpm.
+# A package that pins pnpm in devEngines may set engines.npm to a minimum of 10.9.0 instead of
+# disallow, so consumers of a published package can still install it with npm.
 engines_findings(package_document) := {id |
 	project := object.union(pnpm_project, {"package": package_document})
 	some id in finding_ids(policies.deny) with input as {"projects": [project]}
 	id in {"javascript/pnpm-disallow-npm", "javascript/minimum-pnpm-version"}
 }
 
-dev_engines_node_22 := object.union(dev_engines_pnpm, {"engines": {"node": ">=22.10.0"}})
+dev_engines_with_engines(engines) := object.union(dev_engines_pnpm, {"engines": engines})
 
-test_dev_engines_with_node_22_10_replaces_npm_and_pnpm_engines if {
-	count(engines_findings(dev_engines_node_22)) == 0
-	count(engines_findings(object.union(dev_engines_pnpm, {"engines": {"node": "^24.0.0"}}))) == 0
+test_dev_engines_pin_allows_an_npm_minimum_instead_of_disallow if {
+	count(engines_findings(dev_engines_with_engines({"npm": ">=10.9.0", "pnpm": ">=11.1.3"}))) == 0
+	count(engines_findings(dev_engines_with_engines({"npm": ">=11.10.0", "pnpm": ">=12.0.0"}))) == 0
+	count(engines_findings(dev_engines_with_engines({"npm": "disallow", "pnpm": ">=11.1.3"}))) == 0
 }
 
-test_engines_still_required_without_both_conditions if {
+# npm 7 to 10.8 and pnpm 9 and 10 ignore devEngines.packageManager, and run on any Node.js,
+# so engines.node does not keep them out.
+test_dev_engines_pin_with_engines_node_alone_is_rejected if {
+	engines_findings(dev_engines_with_engines({"node": ">=22.10.0"})) == {
+		"javascript/pnpm-disallow-npm",
+		"javascript/minimum-pnpm-version",
+	}
+}
+
+# pnpm 10 and older ignore devEngines.packageManager.
+test_dev_engines_pin_does_not_replace_engines_pnpm if {
+	engines_findings(dev_engines_with_engines({"npm": ">=10.9.0"})) == {"javascript/minimum-pnpm-version"}
+}
+
+test_npm_minimum_instead_of_disallow_needs_npm_10_9 if {
+	"javascript/pnpm-disallow-npm" in engines_findings(dev_engines_with_engines({"npm": ">=10.8.0", "pnpm": ">=11.1.3"}))
+	"javascript/pnpm-disallow-npm" in engines_findings(dev_engines_with_engines({"npm": "*", "pnpm": ">=11.1.3"}))
+}
+
+test_npm_minimum_instead_of_disallow_needs_an_exact_pnpm_pin if {
+	# Without devEngines, nothing stops npm 10.9 and newer.
+	engines_findings({"engines": {"npm": ">=10.9.0", "pnpm": ">=11.1.3"}}) == {"javascript/pnpm-disallow-npm"}
+
+	# A range does not pin pnpm.
+	"javascript/pnpm-disallow-npm" in engines_findings({
+		"engines": {"npm": ">=10.9.0", "pnpm": ">=11.1.3"},
+		"devEngines": {"packageManager": {"name": "pnpm", "version": "^11.1.3"}},
+	})
+
+	# A pin older than 11.1.3 installs lockfiles that pin versions younger than minimumReleaseAge.
+	"javascript/pnpm-disallow-npm" in engines_findings({
+		"engines": {"npm": ">=10.9.0", "pnpm": ">=11.1.3"},
+		"devEngines": {"packageManager": {"name": "pnpm", "version": "11.1.2"}},
+	})
+}
+
+test_engines_still_required_without_dev_engines if {
 	engines_findings({}) == {"javascript/pnpm-disallow-npm", "javascript/minimum-pnpm-version"}
-
-	# Node.js 22.9 bundles npm 10.8, which ignores devEngines.
-	engines_findings(object.union(dev_engines_pnpm, {"engines": {"node": ">=22.0.0"}})) == {
-		"javascript/pnpm-disallow-npm",
-		"javascript/minimum-pnpm-version",
-	}
-
-	# Without devEngines, nothing stops npm or an older pnpm.
-	engines_findings({"engines": {"node": ">=22.10.0"}}) == {
-		"javascript/pnpm-disallow-npm",
-		"javascript/minimum-pnpm-version",
-	}
-
-	# A version range in devEngines does not pin pnpm.
-	engines_findings({
-		"engines": {"node": ">=22.10.0"},
-		"devEngines": {"packageManager": {"name": "pnpm", "version": "^11.0.0"}},
-	}) == {"javascript/pnpm-disallow-npm", "javascript/minimum-pnpm-version"}
 }
