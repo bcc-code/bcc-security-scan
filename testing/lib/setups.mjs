@@ -55,6 +55,30 @@ function manifest(name, fields) {
 const npmEngines = { npm: `>=${NPM_MINIMUM}` };
 const pnpmEngines = { npm: "disallow", pnpm: `>=${PNPM_MINIMUM}` };
 
+function devEnginesNpmMinimumFiles(context, spec) {
+  return {
+    "package.json": manifest("fixture", {
+      engines: { npm: ">=10.9.0", pnpm: `>=${PNPM_MINIMUM}` },
+      devEngines: { packageManager: { name: "pnpm", version: context.pin } },
+      dependencies: { [context.pkg]: spec },
+    }),
+    ".npmrc": NPMRC_FOR_PNPM,
+    "pnpm-workspace.yaml": pnpmWorkspace(),
+  };
+}
+
+function devEnginesNode22Files(context, spec) {
+  return {
+    "package.json": manifest("fixture", {
+      engines: { node: ">=22.10.0" },
+      devEngines: { packageManager: { name: "pnpm", version: context.pin } },
+      dependencies: { [context.pkg]: spec },
+    }),
+    ".npmrc": NPMRC_FOR_PNPM,
+    "pnpm-workspace.yaml": pnpmWorkspace(),
+  };
+}
+
 const npmVersionAllowed = performer => atLeast(performer, NPM_MINIMUM);
 const pnpmVersionAllowed = performer => atLeast(performer, PNPM_MINIMUM);
 
@@ -64,6 +88,8 @@ const pnpmVersionAllowed = performer => atLeast(performer, PNPM_MINIMUM);
 //   cwd      where the scenario commands run, relative to the fixture root
 //   lockDir  where the lockfile is generated, relative to the fixture root
 //   lockfile path of the lockfile, relative to the fixture root
+//   node     "host" runs every version on the job's host Node.js (24) instead of
+//            the Node.js line of the version's time
 //   expects  human-readable rule for which package manager version may install
 //   allows(performer, context)  that rule as a function
 //   files(context, spec)        the fixture's files; spec is the test package's version
@@ -258,6 +284,53 @@ export const SETUPS = [
       ".npmrc": NPMRC_FOR_PNPM,
       "pnpm-workspace.yaml": pnpmWorkspace(),
     }),
+  },
+  // With an exact pnpm pin in devEngines, policy-v1 accepts engines.npm with a minimum
+  // of 10.9.0 instead of disallow, so consumers of a published package can still use npm.
+  // npm 10.9 and newer refuse devEngines naming pnpm; engine-strict stops older npm.
+  {
+    id: "pnpm-dev-engines-npm-minimum",
+    manager: "pnpm",
+    policy: "accept",
+    title: "pnpm, devEngines pin with engines.npm >=10.9.0 instead of disallow",
+    notes: "devEngines.packageManager pinned to the pin version, engines.npm >=10.9.0 and engines.pnpm, no engines.node; .npmrc with engine-strict; pmOnFail: error. Each version runs on its usual Node.js.",
+    cwd: ".",
+    lockDir: ".",
+    lockfile: "pnpm-lock.yaml",
+    expects: "pnpm == pin",
+    allows: (performer, context) => performer === context.pin,
+    files: devEnginesNpmMinimumFiles,
+  },
+  {
+    id: "pnpm-dev-engines-npm-minimum-on-node24",
+    manager: "pnpm",
+    policy: "accept",
+    title: "As pnpm-dev-engines-npm-minimum, with every version on Node.js 24",
+    notes: "The same files, but every npm and pnpm version runs on Node.js 24, as when a developer upgrades Node.js and keeps an older npm or pnpm.",
+    cwd: ".",
+    lockDir: ".",
+    lockfile: "pnpm-lock.yaml",
+    node: "host",
+    expects: "pnpm == pin",
+    allows: (performer, context) => performer === context.pin,
+    files: devEnginesNpmMinimumFiles,
+  },
+  // The layout PR #13 accepted: engines.node >= 22.10.0 and a devEngines pin, with no
+  // engines.npm or engines.pnpm. On Node.js 22.23, npm 7 to 10.8 and pnpm 9 and 10 ignored
+  // the pin and installed fresh versions, so the policy must reject it.
+  {
+    id: "pnpm-dev-engines-node22",
+    manager: "pnpm",
+    policy: "reject",
+    rejectedWith: "must set engines.npm=disallow",
+    title: "pnpm, devEngines pin and engines.node instead of engines.npm/pnpm",
+    notes: "engines.node >=22.10.0 and devEngines.packageManager pinned, no engines.npm or engines.pnpm. npm 7 to 10.8 and pnpm 9 and 10 ignore devEngines and run on Node.js 22.10 and newer, so they installed fresh versions here.",
+    cwd: ".",
+    lockDir: ".",
+    lockfile: "pnpm-lock.yaml",
+    expects: "pnpm == pin",
+    allows: (performer, context) => performer === context.pin,
+    files: devEnginesNode22Files,
   },
   {
     id: "pnpm-workspace",

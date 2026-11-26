@@ -69,6 +69,8 @@ The package managers run against these; `policy-v1` must accept them. See
 | `pnpm-pin-error` | `devEngines.packageManager` pinned to an exact version, `pmOnFail: error` | the pin only |
 | `pnpm-pin-download` | exact pin, `pmOnFail: download` | the pin only (others may hand over to it) |
 | `pnpm-pin-onfail-download` | exact pin with `onFail: download`, `pmOnFail: error` | the pin only (others may hand over to it) |
+| `pnpm-dev-engines-npm-minimum` | exact pin in `devEngines.packageManager`, `engines.npm` `>=10.9.0` instead of `disallow`, `engines.pnpm` | the pin only |
+| `pnpm-dev-engines-npm-minimum-on-node24` | as above, but every version runs on Node.js 24 | the pin only |
 | `pnpm-workspace` | pnpm workspace; commands run in `packages/app` | pnpm >= 11.1.3 |
 
 The policy must **reject** these layouts, which it used to accept although package
@@ -78,6 +80,7 @@ managers ignored their settings. They are only policy-checked:
 | --- | --- | --- |
 | `npm-parent-npmrc` | `app/` has package.json and lockfile; the only `.npmrc` is in the root | npm reads only the `.npmrc` of the folder it runs in; every npm version installed fresh versions |
 | `pnpm-workspace-no-root-manifest` | pnpm workspace without a root package.json | nothing sets `engines.pnpm`; pnpm 7 to 10 installed fresh versions |
+| `pnpm-dev-engines-node22` | `engines.node` `>=22.10.0` and a `devEngines` pin, no `engines.npm` or `engines.pnpm` (accepted by policy-v1 PR #13) | npm 7 to 10.8 and pnpm 9 and 10 ignore `devEngines` and run on any Node.js; they installed fresh versions |
 
 For cross-manager runs, npm in any pnpm setup must be refused (`engines.npm=disallow`).
 pnpm in an npm setup is reported, but the policy does not cover it, so it never counts

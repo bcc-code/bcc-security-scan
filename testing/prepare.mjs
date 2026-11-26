@@ -14,6 +14,7 @@
 //   NPM_GENERATOR  npm version that writes the npm lockfiles; empty picks one
 //   NODE_VERSION   Node.js version for every job; empty maps by major version
 //   CROSS_MANAGER  true (default) also runs each manager on the other's setups
+//   POLICY_REF     policy branch the fixtures are checked against (default policy-v1)
 
 import fs from "node:fs";
 import os from "node:os";
@@ -384,7 +385,7 @@ async function main() {
   const manifest = {
     schemaVersion: 1,
     createdAt: new Date(now).toISOString(),
-    policyBranch: "policy-v1",
+    policyBranch: setting("POLICY_REF", "policy-v1"),
     context,
     package: {
       name: pkg.name,
@@ -393,8 +394,8 @@ async function main() {
       times: pkg.times,
     },
     generators: { npm: npmGenerator, pnpm: pin },
-    setups: SETUPS.map(({ id, manager, policy, rejectedWith, title, notes, cwd, expects }) =>
-      ({ id, manager, policy, rejectedWith, title, notes, cwd, expects })),
+    setups: SETUPS.map(({ id, manager, policy, rejectedWith, title, notes, cwd, node, expects }) =>
+      ({ id, manager, policy, rejectedWith, title, notes, cwd, node: node ?? null, expects })),
     scenarios: SCENARIOS.map(({ id, short, title, notes, variant, ci, sameManagerOnly }) =>
       ({ id, short, title, notes, variant, ci, sameManagerOnly: Boolean(sameManagerOnly) })),
     plan: { scope: useOverrides ? "custom" : scope, managers, crossManager, nodeOverride, skipped, ...plan },

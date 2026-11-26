@@ -3,6 +3,7 @@ name: Package manager version tests
 run-name: >-
   Package manager version tests
   (${{ github.event_name == 'push' && 'sample' || inputs.versions != '' && 'custom' || inputs.scope }})
+  ${{ inputs.policy-ref != '' && inputs.policy-ref != 'policy-v1' && format('against {0}', inputs.policy-ref) || '' }}
 
 # Tests, for every npm and pnpm version in testing/versions, whether the version is
 # allowed to install in each setup the supply-chain policy accepts, and whether it
@@ -56,6 +57,10 @@ on:
         description: Fail the report job when a version contradicts the policy's intent
         type: boolean
         default: true
+      policy-ref:
+        description: Policy branch to check the fixtures against; policy-v1 uses the check action, any other branch (e.g. an unmerged policy PR) the same inventory and Conftest
+        type: string
+        default: policy-v1
 
 permissions: {}
 
@@ -101,6 +106,7 @@ jobs:
           PNPM_PIN: ${{ inputs.pnpm-pin }}
           NODE_VERSION: ${{ inputs.node-version }}
           CROSS_MANAGER: ${{ github.event_name == 'push' || inputs.cross-manager }}
+          POLICY_REF: ${{ inputs.policy-ref || 'policy-v1' }}
         run: node testing/prepare.mjs --out "$RUNNER_TEMP/fixtures"
 
       - name: Upload fixtures
@@ -125,6 +131,9 @@ jobs:
       matrix:
         setup: ${{ fromJSON(needs.prepare.outputs.setups) }}
 
+    env:
+      POLICY_REF: ${{ inputs.policy-ref || 'policy-v1' }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -138,27 +147,31 @@ jobs:
           name: fixtures
           path: fixtures
 
+      # policy-v1: the real check action.
       - name: Check the fixture that locks the mature version
         id: mature
+        if: env.POLICY_REF == 'policy-v1'
         continue-on-error: true
         uses: ./supply-chain-protections/check
         with:
           path: fixtures/${{ matrix.setup.id }}/mature
 
       - name: Keep the first SARIF report
-        if: always() && steps.mature.outputs.sarif != ''
+        if: always() && env.POLICY_REF == 'policy-v1' && steps.mature.outputs.sarif != ''
         env:
           SARIF: ${{ steps.mature.outputs.sarif }}
         run: cp "$SARIF" "$RUNNER_TEMP/mature.sarif" || true
 
       - name: Check the fixture that locks the fresh version
         id: fresh
+        if: env.POLICY_REF == 'policy-v1'
         continue-on-error: true
         uses: ./supply-chain-protections/check
         with:
           path: fixtures/${{ matrix.setup.id }}/fresh
 
       - name: Record the result
+        if: env.POLICY_REF == 'policy-v1'
         env:
           SETUP: ${{ matrix.setup.id }}
           EXPECTED: ${{ matrix.setup.policy }}
@@ -213,6 +226,22 @@ jobs:
           elif [[ "$EXPECTED" == "reject" && "$accepted" == "true" ]]; then
             echo "::error::The policy accepts the $SETUP fixtures, but must reject them."
           fi
+
+      # Another branch: the same inventory and Conftest, with that branch's policy.
+      - name: Set up Node.js
+        if: env.POLICY_REF != 'policy-v1'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.HOST_NODE_VERSION }}
+
+      - name: Check both fixtures against ${{ env.POLICY_REF }}
+        if: env.POLICY_REF != 'policy-v1'
+        env:
+          SETUP: ${{ matrix.setup.id }}
+          EXPECTED: ${{ matrix.setup.policy }}
+        run: >-
+          testing/policy-check.sh "$POLICY_REF" "$SETUP" "$EXPECTED"
+          "$GITHUB_WORKSPACE/fixtures" "$RUNNER_TEMP/policy-results"
 
       - name: Upload the result
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

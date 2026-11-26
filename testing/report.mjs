@@ -300,7 +300,9 @@ function main() {
   add(
     "## Setups",
     "",
-    "Every setup is checked with the `supply-chain-protections/check` action against the `policy-v1` policy, once with each lockfile.",
+    manifest.policyBranch === "policy-v1"
+      ? "Every setup is checked with the `supply-chain-protections/check` action against the `policy-v1` policy, once with each lockfile."
+      : `Every setup is checked against the policy on the \`${manifest.policyBranch}\` branch, with the inventory action and Conftest version the check action uses, once with each lockfile.`,
     "The policy must accept the setups the package managers run against, and reject the layouts that had gaps.",
     "",
     table(

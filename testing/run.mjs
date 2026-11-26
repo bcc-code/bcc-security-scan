@@ -166,6 +166,8 @@ function main() {
     ? path.resolve(args.node)
     : run("/bin/sh", ["-c", "command -v node"], { cwd: work, env: process.env }).output.trim();
   const testNodeDir = path.dirname(testNode);
+  // Setups with node: "host" run on the Node.js that runs this script (24 in CI).
+  const nodeDirFor = setup => (setup.node === "host" ? path.dirname(process.execPath) : testNodeDir);
 
   const report = {
     schemaVersion: 1,
@@ -222,7 +224,7 @@ function main() {
       fs.cpSync(path.join(fixtures, setup.id, "mature"), path.join(probeDir, "project"), { recursive: true });
       const probe = run(tool.bin, ["--version"], {
         cwd: path.join(probeDir, "project", setup.cwd),
-        env: isolatedEnv({ home: path.join(probeDir, "home"), pathDirs: [tool.binDir, testNodeDir] }),
+        env: isolatedEnv({ home: path.join(probeDir, "home"), pathDirs: [tool.binDir, nodeDirFor(setup)] }),
       });
       const printed = probe.output.trim().split(/\r?\n/).pop() ?? "";
       effectiveVersion = probe.exitCode === 0 && /^\d+\.\d+\.\d+/.test(printed) ? printed : null;
@@ -248,7 +250,7 @@ function main() {
       const commandArgs = scenario.args[manager](context);
       const env = isolatedEnv({
         home: path.join(scenarioDir, "home"),
-        pathDirs: [tool.binDir, testNodeDir],
+        pathDirs: [tool.binDir, nodeDirFor(setup)],
         ci: scenario.ci,
       });
 
@@ -282,7 +284,7 @@ function main() {
       fs.mkdirSync(path.dirname(logFile), { recursive: true });
       fs.writeFileSync(logFile, [
         `$ cd ${setup.cwd} && ${scenario.ci ? "CI=true " : ""}${command}`,
-        `# ${manager} ${version} on Node.js ${report.node}`,
+        `# ${manager} ${version} on Node.js ${setup.node === "host" ? process.version : report.node}`,
         `# exit ${result.exitCode}${result.signal ? ` (signal ${result.signal})` : ""}${result.timedOut ? " (timed out)" : ""} after ${result.durationMs} ms`,
         "",
         result.output,
@@ -297,6 +299,7 @@ function main() {
         setupManager: setup.manager,
         scenario: scenario.id,
         cwd: setup.cwd,
+        node: setup.node === "host" ? process.version : report.node,
         command,
         ci: scenario.ci,
         exitCode: result.exitCode,
