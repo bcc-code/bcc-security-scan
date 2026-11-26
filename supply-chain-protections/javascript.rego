@@ -8,6 +8,15 @@ import rego.v1
 #   3. a finding whose message names the file, the problem, and the reason.
 # Deny rules say "must"; warn rules say "should".
 
+# The oldest package manager versions the rules below accept.
+# npm 11.10.0 is the first npm version with every .npmrc setting checked below.
+# pnpm 11.1.3 is the first pnpm version that checks pnpm-lock.yaml against
+# minimumReleaseAge, so a committed lockfile that pins a version younger than
+# seven days fails the install instead of installing it.
+npm_minimum_version := "11.10.0"
+
+pnpm_minimum_version := "11.1.3"
+
 # ===========================================================================
 # Package managers and lockfiles
 # ===========================================================================
@@ -43,6 +52,8 @@ deny contains finding if {
 }
 
 # Recommends pnpm over npm, because pnpm has stronger supply-chain controls.
+# In particular, npm applies min-release-age only when it resolves a version:
+# npm ci installs whatever package-lock.json pins, however recently it was published.
 warn contains finding if {
 	some project in input.projects
 	project.manager == "npm"
@@ -50,7 +61,9 @@ warn contains finding if {
 	finding := policy_finding(
 		concat(" ", [
 			sprintf("%s should use pnpm instead of npm.", [project.packagePath]),
-			"pnpm provides stronger supply-chain protections.",
+			"npm does not check the versions already in package-lock.json against min-release-age,",
+			"so npm ci installs a locked version even when it was published less than seven days ago.",
+			sprintf("pnpm %s and newer reject such a lockfile.", [pnpm_minimum_version]),
 		]),
 		project.packagePath,
 		"javascript/prefer-pnpm",
@@ -129,16 +142,16 @@ npmrc_required_settings := {
 	},
 }
 
-# Requires npm 11.10.0 or newer, the first version with every setting checked below.
+# Requires npm_minimum_version or newer, the first version with every setting checked below.
 deny contains finding if {
 	some project in input.projects
 	project.manager == "npm"
 	engines := object.get(project.package, "engines", {})
-	not engine_at_least(object.get(engines, "npm", ""), "11.10.0")
+	not engine_at_least(object.get(engines, "npm", ""), npm_minimum_version)
 
 	finding := policy_finding(
 		concat(" ", [
-			sprintf("%s must set engines.npm to exclude versions older than 11.10.0.", [project.packagePath]),
+			sprintf("%s must set engines.npm to exclude versions older than %s.", [project.packagePath, npm_minimum_version]),
 			"Older npm versions do not support the required supply-chain protections.",
 		]),
 		project.packagePath,
@@ -146,28 +159,34 @@ deny contains finding if {
 	)
 }
 
-# Requires an .npmrc, where npm reads its supply-chain settings.
+# Requires an .npmrc next to every package.json in npm projects, where npm reads its
+# supply-chain settings. npm reads only the .npmrc of the project it runs in (and, from
+# npm 8, of the workspace root), so an .npmrc in a parent folder neither sets
+# min-release-age nor makes npm enforce engines.npm.
 deny contains finding if {
 	some project in input.projects
 	project.manager == "npm"
-	project.npmrcPath == ""
+	npmrc := path_for(project.root, ".npmrc")
+	project.npmrcPath != npmrc
 
 	finding := policy_finding(
 		concat(" ", [
-			sprintf("%s has no applicable .npmrc.", [project.packagePath]),
-			"Add and commit an .npmrc containing the required npm supply-chain settings.",
-			"Rerun this check after adding it to get them listed.",
+			sprintf("%s must exist and contain the required npm supply-chain settings.", [npmrc]),
+			"npm reads only the .npmrc of the folder it runs in (and, from npm 8, the workspace root's),",
+			"so an .npmrc in a parent folder lets older npm versions install without these settings.",
+			"Rerun this check after adding it to get the settings listed.",
 		]),
-		project.packagePath,
+		npmrc,
 		"javascript/npmrc-required",
 	)
 }
 
 # Requires the .npmrc settings in npmrc_required_settings; each entry gives its reason.
+# Only the .npmrc next to package.json is checked: npm ignores the others.
 deny contains finding if {
 	some project in input.projects
 	project.manager == "npm"
-	project.npmrcPath != ""
+	project.npmrcPath == path_for(project.root, ".npmrc")
 	some key, setting in npmrc_required_settings
 	lower(sprintf("%v", [object.get(project.npmrc, key, "")])) != setting.value
 
@@ -186,7 +205,7 @@ deny contains finding if {
 deny contains finding if {
 	some project in input.projects
 	project.manager == "npm"
-	project.npmrcPath != ""
+	project.npmrcPath == path_for(project.root, ".npmrc")
 	not number_at_least(object.get(project.npmrc, "min-release-age", ""), 7)
 
 	finding := policy_finding(
@@ -218,7 +237,7 @@ pnpm_required_true_settings := {
 # engine-strict=true that pnpm-npmrc-engine-strict requires.
 dev_engines_enforce_pnpm(package_document) if {
 	engine_at_least(object.get(object.get(package_document, "engines", {}), "node", ""), "22.10.0")
-	dev_engines_pinned_at_least(package_document, "pnpm", "11.0.0")
+	dev_engines_pinned_at_least(package_document, "pnpm", pnpm_minimum_version)
 }
 
 # Requires engines.npm=disallow, so tools and automation cannot fall back to npm,
@@ -236,31 +255,34 @@ deny contains finding if {
 			sprintf("%s must set engines.npm=disallow because the project uses pnpm.", [project.packagePath]),
 			"This prevents tools and automation from falling back to npm.",
 			"Alternatively, set engines.node to >=22.10.0 and pin pnpm in devEngines.packageManager",
-			"(e.g. {\"name\": \"pnpm\", \"version\": \"11.0.0\"}), which does not restrict consumers of a published package.",
+			sprintf("(e.g. {\"name\": \"pnpm\", \"version\": \"%s\"}), which does not restrict consumers of a published package.", [pnpm_minimum_version]),
 		]),
 		project.packagePath,
 		"javascript/pnpm-disallow-npm",
 	)
 }
 
-# Requires pnpm 11.0.0 or newer, the first version with every setting checked below.
+# Requires pnpm_minimum_version or newer: older versions lack settings checked below,
+# or install a lockfile that pins a version younger than minimumReleaseAge.
 # Only the workspace package needs it: there it stops older pnpm versions from installing
 # anywhere in the workspace, and running scripts without installing reads no supply-chain settings.
 # Not required when dev_engines_enforce_pnpm holds: devEngines then pins pnpm instead.
+# pnpm-workspace-package-required makes sure the workspace package exists.
 deny contains finding if {
 	some project in input.projects
 	project.manager == "pnpm"
 	is_workspace_root(project)
 	not dev_engines_enforce_pnpm(project.package)
 	engines := object.get(project.package, "engines", {})
-	not engine_at_least(object.get(engines, "pnpm", ""), "11.0.0")
+	not engine_at_least(object.get(engines, "pnpm", ""), pnpm_minimum_version)
 
 	finding := policy_finding(
 		concat(" ", [
-			sprintf("%s must set engines.pnpm to exclude versions older than 11.0.0.", [project.packagePath]),
-			"Older pnpm versions do not support the required supply-chain protections.",
+			sprintf("%s must set engines.pnpm to exclude versions older than %s.", [project.packagePath, pnpm_minimum_version]),
+			"Older pnpm versions do not support the required supply-chain protections,",
+			"or install a lockfile that pins versions published less than seven days ago.",
 			"Alternatively, set engines.node to >=22.10.0 and pin pnpm in devEngines.packageManager",
-			"(e.g. {\"name\": \"pnpm\", \"version\": \"11.0.0\"}), which does not restrict consumers of a published package.",
+			sprintf("(e.g. {\"name\": \"pnpm\", \"version\": \"%s\"}), which does not restrict consumers of a published package.", [pnpm_minimum_version]),
 		]),
 		project.packagePath,
 		"javascript/minimum-pnpm-version",
@@ -323,6 +345,27 @@ deny contains finding if {
 	)
 }
 
+# Requires a package.json next to pnpm-workspace.yaml. pnpm reads engines.pnpm and
+# devEngines.packageManager only from that workspace package, so without one nothing
+# stops older pnpm versions from installing in the workspace.
+deny contains finding if {
+	some project in input.projects
+	project.manager == "pnpm"
+	project.workspacePath != ""
+	not project_for(directory_of(project.workspacePath))
+
+	finding := policy_finding(
+		concat(" ", [
+			sprintf("%s must exist next to %s", [workspace_package_path(project), project.workspacePath]),
+			sprintf("and set engines.pnpm to exclude versions older than %s.", [pnpm_minimum_version]),
+			"pnpm checks engines.pnpm only in the workspace package,",
+			"so without it older pnpm versions install in every package of the workspace.",
+		]),
+		project.workspacePath,
+		"javascript/pnpm-workspace-package-required",
+	)
+}
+
 # Requires the pnpm settings in pnpm_required_true_settings; each entry gives its reason.
 deny contains finding if {
 	some project in input.projects
@@ -373,7 +416,10 @@ deny contains finding if {
 		concat(" ", [
 			sprintf("%s must set pmOnFail: error,", [project.workspacePath]),
 			sprintf("or pmOnFail: download when %s sets devEngines.packageManager", [workspace_package_path(project)]),
-			"to an exact pnpm version of 11.0.0 or newer (e.g. {\"name\": \"pnpm\", \"version\": \"11.0.0\"}).",
+			sprintf(
+				"to an exact pnpm version of %s or newer (e.g. {\"name\": \"pnpm\", \"version\": \"%s\"}).",
+				[pnpm_minimum_version, pnpm_minimum_version],
+			),
 			"This stops pnpm from continuing with a version other than the pinned one.",
 		]),
 		project.workspacePath,
@@ -384,7 +430,7 @@ deny contains finding if {
 pm_on_fail_allowed(_, "error")
 
 pm_on_fail_allowed(project, "download") if {
-	dev_engines_pinned_at_least(workspace_package(project), "pnpm", "11.0.0")
+	dev_engines_pinned_at_least(workspace_package(project), "pnpm", pnpm_minimum_version)
 }
 
 # Rejects packageManager in pnpm projects; devEngines.packageManager pins pnpm instead.
@@ -400,7 +446,7 @@ deny contains finding if {
 		concat(" ", [
 			sprintf("%s must not set packageManager.", [project.packagePath]),
 			"Pin pnpm with devEngines.packageManager instead",
-			"(e.g. {\"name\": \"pnpm\", \"version\": \"11.0.0\"}) in the workspace package.json:",
+			sprintf("(e.g. {\"name\": \"pnpm\", \"version\": \"%s\"}) in the workspace package.json:", [pnpm_minimum_version]),
 			"pnpm records that release's integrity in pnpm-lock.yaml and refuses a release that does not match it.",
 		]),
 		project.packagePath,
@@ -423,7 +469,7 @@ deny contains finding if {
 	finding := policy_finding(
 		concat(" ", [
 			sprintf("%s must not set devEngines.packageManager onFail: %v.", [project.packagePath, on_fail]),
-			"Leave it out, or use error, or download with an exact pnpm version of 11.0.0 or newer,",
+			sprintf("Leave it out, or use error, or download with an exact pnpm version of %s or newer,", [pnpm_minimum_version]),
 			"so pnpm never continues with a version other than the pinned one.",
 		]),
 		project.packagePath,
@@ -436,7 +482,7 @@ dev_engines_on_fail_allowed(_, "")
 dev_engines_on_fail_allowed(_, "error")
 
 dev_engines_on_fail_allowed(entry, "download") if {
-	is_exact_pin(entry, "pnpm", "11.0.0")
+	is_exact_pin(entry, "pnpm", pnpm_minimum_version)
 }
 
 # Requires trustPolicy: no-downgrade, so a release published with weaker provenance
@@ -556,7 +602,7 @@ deny contains finding if {
 			],
 			[hint | command.path in container_build_paths; hint := concat(" ", [
 				"To install pnpm itself in a container build,",
-				"use npm install -g pnpm@<exact version of 11.0.0 or newer>.",
+				sprintf("use npm install -g pnpm@<exact version of %s or newer>.", [pnpm_minimum_version]),
 			])],
 		)),
 		command.path,

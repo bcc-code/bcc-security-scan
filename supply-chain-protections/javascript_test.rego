@@ -154,6 +154,40 @@ test_minimum_pnpm_version_checks_only_the_workspace_package if {
 	files == {"package.json"}
 }
 
+minimum_pnpm_flagged(constraint) if {
+	project := object.union(pnpm_project, {"package": {"engines": {"pnpm": constraint}}})
+	findings := policies.deny with input as {"projects": [project]}
+	"javascript/minimum-pnpm-version" in finding_ids(findings)
+}
+
+# pnpm 11.0.0 to 11.1.2 install a lockfile that pins a version younger than minimumReleaseAge.
+test_minimum_pnpm_version_excludes_versions_without_lockfile_age_checks if {
+	minimum_pnpm_flagged(">=11.0.0")
+	minimum_pnpm_flagged(">=11.1.2")
+	not minimum_pnpm_flagged(">=11.1.3")
+	not minimum_pnpm_flagged(">=12.0.0")
+}
+
+# Without a workspace package, nothing sets engines.pnpm for the workspace.
+test_pnpm_workspace_package_is_required if {
+	findings := policies.deny with input as {"projects": [sub_package]}
+	some finding in findings
+	finding.policy_id == "javascript/pnpm-workspace-package-required"
+	finding._loc.file == "pnpm-workspace.yaml"
+	contains(finding.msg, "package.json must exist next to pnpm-workspace.yaml")
+}
+
+test_pnpm_workspace_package_is_accepted_when_present if {
+	findings := policies.deny with input as {"projects": [pnpm_project, sub_package]}
+	not "javascript/pnpm-workspace-package-required" in finding_ids(findings)
+}
+
+test_pnpm_workspace_package_is_reported_once_per_workspace if {
+	other := object.union(sub_package, {"root": "apps/api", "packagePath": "apps/api/package.json", "npmrcPath": "apps/api/.npmrc"})
+	findings := policies.deny with input as {"projects": [sub_package, other]}
+	count([finding | some finding in findings; finding.policy_id == "javascript/pnpm-workspace-package-required"]) == 1
+}
+
 dev_engines_flagged(package_manager) if {
 	project := object.union(pnpm_project, {"package": {"devEngines": {"packageManager": package_manager}}})
 	findings := policies.deny with input as {"projects": [project]}
@@ -171,12 +205,61 @@ test_dev_engines_on_fail_rejects_unsafe_values if {
 	dev_engines_flagged({"name": "pnpm", "version": "11.2.3", "onFail": "ignore"})
 	dev_engines_flagged({"name": "pnpm", "version": "11.2.3", "onFail": "warn"})
 	dev_engines_flagged({"name": "pnpm", "version": "^11.0.0", "onFail": "download"})
+	dev_engines_flagged({"name": "pnpm", "version": "11.1.2", "onFail": "download"})
 	dev_engines_flagged([{"name": "pnpm", "version": "11.2.3", "onFail": "ignore"}])
+}
+
+test_pm_on_fail_download_needs_a_pin_of_the_minimum_version if {
+	pm_on_fail_flagged({"devEngines": {"packageManager": {"name": "pnpm", "version": "11.1.2"}}}, "download")
+	not pm_on_fail_flagged({"devEngines": {"packageManager": {"name": "pnpm", "version": "11.1.3"}}}, "download")
 }
 
 ci_command(command) := {"path": "Dockerfile", "projectRoot": ".", "command": command, "env": {"CI": "true"}}
 
 npm_project := object.union(pnpm_project, {"manager": "npm", "lockfilePath": "package-lock.json"})
+
+npm_settings := {
+	"engine-strict": "true",
+	"allow-git": "root",
+	"allow-remote": "root",
+	"ignore-scripts": "true",
+	"min-release-age": "7",
+}
+
+test_npm_project_with_its_own_npmrc_is_accepted if {
+	project := object.union(npm_project, {"package": {"engines": {"npm": ">=11.10.0"}}, "npmrc": npm_settings})
+	findings := policies.deny with input as {"projects": [project]}
+	count(findings) == 0
+}
+
+# npm reads only the .npmrc of the project it runs in, not one in a parent folder.
+test_npmrc_is_required_next_to_every_npm_package if {
+	inherited := object.union(npm_project, {
+		"root": "app",
+		"packagePath": "app/package.json",
+		"package": {"engines": {"npm": ">=11.10.0"}},
+		"npmrc": npm_settings,
+	})
+	findings := policies.deny with input as {"projects": [inherited]}
+	some finding in findings
+	finding.policy_id == "javascript/npmrc-required"
+	finding._loc.file == "app/.npmrc"
+}
+
+test_npmrc_settings_are_checked_only_in_the_own_npmrc if {
+	inherited := object.union(npm_project, {"root": "app", "packagePath": "app/package.json", "npmrc": {}})
+	ids := finding_ids(policies.deny) with input as {"projects": [inherited]}
+	"javascript/npmrc-required" in ids
+	not "javascript/npmrc-min-release-age" in ids
+	not "javascript/npmrc-engine-strict" in ids
+}
+
+test_prefer_pnpm_explains_unchecked_lockfiles if {
+	findings := policies.warn with input as {"projects": [npm_project]}
+	some finding in findings
+	finding.policy_id == "javascript/prefer-pnpm"
+	contains(finding.msg, "npm ci installs a locked version")
+}
 
 # One finding per problem: each pair below used to produce two findings.
 test_inline_npm_install_is_reported_once if {
@@ -260,7 +343,7 @@ ci_command_rules := {
 test_container_may_install_an_allowed_pnpm_globally if {
 	every command in {
 		"npm install -g pnpm@12.13.0",
-		"npm i -g pnpm@11.0.0",
+		"npm i -g pnpm@11.1.3",
 		"npm install --global pnpm@12.15.0",
 		"npm install pnpm@12.13.0 -g",
 		"npm install -g pnpm@12.13.0 && pnpm install --frozen-lockfile",
@@ -277,6 +360,7 @@ test_container_global_pnpm_install_needs_an_allowed_exact_version if {
 		"npm install -g pnpm@12",
 		"npm install -g pnpm@^12.0.0",
 		"npm install -g pnpm@10.30.0",
+		"npm install -g pnpm@11.1.2",
 		"npm install -g pnpm@12.0.0-rc.1",
 	} {
 		"javascript/inline-package-install" in container_ids(command)

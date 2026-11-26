@@ -252,7 +252,7 @@ pnpm_global_install_pattern := concat("", [
 allowed_pnpm_global_installs(command) := {{"text": match[0], "replacement": sprintf(" %s", [match[3]])} |
 	some match in regex.find_all_string_submatch_n(pnpm_global_install_pattern, command, -1)
 	version := concat("", [match[1], match[2]])
-	semver.compare(version, "11.0.0") >= 0
+	semver.compare(version, pnpm_minimum_version) >= 0
 }
 
 # Matches `pattern` where a command starts: at the beginning of a line,
