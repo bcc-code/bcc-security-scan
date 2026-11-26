@@ -306,3 +306,39 @@ test_workflow_global_pnpm_install_is_still_reported if {
 	}
 	"javascript/inline-package-install" in ids
 }
+
+# A package on Node.js 22.10.0+ with pnpm pinned in devEngines does not need engines.npm or engines.pnpm.
+engines_findings(package_document) := {id |
+	project := object.union(pnpm_project, {"package": package_document})
+	some id in finding_ids(policies.deny) with input as {"projects": [project]}
+	id in {"javascript/pnpm-disallow-npm", "javascript/minimum-pnpm-version"}
+}
+
+dev_engines_node_22 := object.union(dev_engines_pnpm, {"engines": {"node": ">=22.10.0"}})
+
+test_dev_engines_with_node_22_10_replaces_npm_and_pnpm_engines if {
+	count(engines_findings(dev_engines_node_22)) == 0
+	count(engines_findings(object.union(dev_engines_pnpm, {"engines": {"node": "^24.0.0"}}))) == 0
+}
+
+test_engines_still_required_without_both_conditions if {
+	engines_findings({}) == {"javascript/pnpm-disallow-npm", "javascript/minimum-pnpm-version"}
+
+	# Node.js 22.9 bundles npm 10.8, which ignores devEngines.
+	engines_findings(object.union(dev_engines_pnpm, {"engines": {"node": ">=22.0.0"}})) == {
+		"javascript/pnpm-disallow-npm",
+		"javascript/minimum-pnpm-version",
+	}
+
+	# Without devEngines, nothing stops npm or an older pnpm.
+	engines_findings({"engines": {"node": ">=22.10.0"}}) == {
+		"javascript/pnpm-disallow-npm",
+		"javascript/minimum-pnpm-version",
+	}
+
+	# A version range in devEngines does not pin pnpm.
+	engines_findings({
+		"engines": {"node": ">=22.10.0"},
+		"devEngines": {"packageManager": {"name": "pnpm", "version": "^11.0.0"}},
+	}) == {"javascript/pnpm-disallow-npm", "javascript/minimum-pnpm-version"}
+}
